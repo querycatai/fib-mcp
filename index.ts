@@ -46,3 +46,6 @@ export type { SseClientOptions }                             from './src/sse';
 
 export { HttpServerTransport }                               from './src/http';
 export type { HttpServerTransportOptions }                   from './src/http';
+
+export { BidirectionalSession }                              from './src/bidirectional_session';
+export type { BidirectionalWebSocket, BidirectionalSessionOpenOptions, BidirectionalConnectOptions } from './src/bidirectional_session';

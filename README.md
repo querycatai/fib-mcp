@@ -22,13 +22,6 @@ TypeScript runs directly on fibjs; no compile step is required.
 ## Installation
 
 ```bash
-fibjs --install fib-mcp
-```
-
-## Quick Start
-
-### Server — HTTP
-
 ```ts
 import http from 'http';
 import { McpServer } from 'fib-mcp';
@@ -238,20 +231,87 @@ Connect via fibjs WebSocket transport.
 Options:
 - `protocols?`: WebSocket sub-protocols
 
----
-
 ## Transport Notes
 
-| Transport | Side   | Implementation |
-|-----------|--------|----------------|
-| stdio     | client | SDK            |
-| stdio     | server | SDK            |
-| http      | client | SDK (StreamableHTTP) |
-| http      | server | fibjs-native   |
-| sse       | client | fibjs-native   |
-| sse       | server | fibjs-native   |
-| ws        | client | fibjs-native   |
-| ws        | server | fibjs-native   |
+| Transport | Client | Server |
+|-----------|--------|--------|
+| stdio     | SDK | SDK |
+| http      | SDK Streamable HTTP | fibjs-native |
+| sse       | fibjs-native | fibjs-native |
+| ws        | fibjs-native | fibjs-native |
+
+## Bidirectional Session
+
+For the special case where one WebSocket connection must carry bidirectional MCP calls,
+use `BidirectionalSession`.
+
+It internally creates the two logical MCP sides needed for one shared WebSocket,
+without exposing that middle layer in the public API.
+
+For most cases, you only need to prepare the local `McpServer`.
+`BidirectionalSession.handler(server)` and `BidirectionalSession.open(url, server)` wrap the raw WebSocket setup for you.
+
+Server side:
+
+```ts
+import http from 'http';
+import { BidirectionalSession, McpServer } from 'fib-mcp';
+
+const localServer = new McpServer({ name: 'local-server', version: '1.0.0' });
+
+localServer.tool('ping', {}, async () => ({
+  content: [{ type: 'text', text: 'pong' }],
+}));
+
+const httpServer = new http.Server(3000, {
+  '/mcp': BidirectionalSession.handler(localServer, {
+    clientInfo: { name: 'remote-client', version: '1.0.0' },
+  }),
+});
+
+httpServer.start();
+```
+
+Client side:
+
+```ts
+import { BidirectionalSession, McpServer } from 'fib-mcp';
+
+const peerServer = new McpServer({ name: 'peer-server', version: '1.0.0' });
+
+peerServer.tool('echo', {}, async () => ({
+  content: [{ type: 'text', text: 'echo-from-peer' }],
+}));
+
+const session = await BidirectionalSession.open('ws://127.0.0.1:3000/mcp', peerServer, {
+  clientInfo: { name: 'peer-client', version: '1.0.0' },
+});
+
+const result = await session.client.callTool({ name: 'ping', arguments: {} });
+console.log(result.content[0].text);
+
+await session.close();
+```
+
+If you need lower-level control, `BidirectionalSession.connect(ws, server)` still accepts an already opened WebSocket object.
+
+The `ws` object only needs to provide:
+
+- `onmessage`
+- `onerror`
+- `onclose`
+- `send(data: string)`
+- `close()`
+
+## Notifications
+
+Notification flow is supported both on normal MCP transports and on `BidirectionalSession`.
+
+Current test coverage includes:
+
+- base WebSocket MCP notification delivery
+- internal notification routing in `BidirectionalSession`
+- peer-to-peer notification forwarding across a shared bidirectional session
 
 ## Testing
 
@@ -259,5 +319,6 @@ Options:
 fibjs test/all.test.ts
 fibjs --test test/integration_test.ts
 fibjs --test test/edge_cases_test.ts
+fibjs --test test/bidirectional_provider_test.ts
 ```
 

@@ -3,6 +3,7 @@ import assert from 'assert';
 import coroutine from 'coroutine';
 import path from 'path';
 import http from 'http';
+import { ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
 
 import { McpServer, McpClient } from '../index';
 
@@ -174,6 +175,17 @@ describe('fib-mcp integration', () => {
         it('can call a tool', async () => {
             const result = await withTimeout(client.callTool({ name: 'ping', arguments: {} }), 3000, 'ws callTool ping');
             assert.equal(extractFirstText(result), 'pong');
+        });
+
+        it('supports notifications on the base provider path', async () => {
+            const notified = new Promise<void>((resolve) => {
+                client.setNotificationHandler(ToolListChangedNotificationSchema, () => {
+                    resolve();
+                });
+            });
+
+            await withTimeout(server.sendToolListChanged(), 3000, 'ws sendToolListChanged');
+            await withTimeout(notified, 3000, 'ws receive tool list changed notification');
         });
     });
 
