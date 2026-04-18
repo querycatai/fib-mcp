@@ -4,6 +4,32 @@
   "description": "MCP (Model Context Protocol) client/server for fibjs with stdio/http/sse/ws transport",
   "main": "index.ts",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/querycatai/fib-mcp.git"
+  },
+  "homepage": "https://github.com/querycatai/fib-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/querycatai/fib-mcp/issues"
+  },
+  "keywords": [
+    "fibjs",
+    "mcp",
+    "model-context-protocol",
+    "sdk",
+    "http",
+    "sse",
+    "websocket",
+    "stdio"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "index.ts",
+    "src/",
+    "README.md"
+  ],
   "scripts": {
     "test": "fibjs --test test/*.ts"
   },

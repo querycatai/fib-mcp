@@ -3,8 +3,9 @@
 MCP (Model Context Protocol) SDK for the fibjs ecosystem.
 
 `McpServer` and `McpClient` extend `@modelcontextprotocol/sdk` directly.
-fib-mcp adds fibjs-native transports (`sse`, `ws`, `http`) and handler methods
-for mounting them into your own `http.Server`.
+fib-mcp adds fibjs-native server transports (`sse`, `ws`, `http`),
+fibjs-native client transports for `sse` and `ws`, and handler methods
+for mounting server transports into your own `http.Server`.
 
 TypeScript runs directly on fibjs; no compile step is required.
 
@@ -12,14 +13,16 @@ TypeScript runs directly on fibjs; no compile step is required.
 
 - `McpServer extends sdk.McpServer` — all SDK methods available as-is
 - `McpClient extends sdk.Client` — all SDK methods available as-is
-- fibjs-native transports: `sse`, `ws`, `http` (server & client)
+- fibjs-native server transports: `sse`, `ws`, `http`
+- fibjs-native client transports: `sse`, `ws`
+- HTTP client uses the SDK Streamable HTTP transport
 - SSE automatic endpoint discovery (standard MCP SSE protocol)
 - Designed to be mounted into user-managed `http.Server` routes
 
 ## Installation
 
 ```bash
-npm install @modelcontextprotocol/sdk
+fibjs --install fib-mcp
 ```
 
 ## Quick Start
@@ -157,13 +160,13 @@ Extends `@modelcontextprotocol/sdk` `Client`. All SDK methods (`callTool`, `list
 `ping`, `complete`, `connect`, `close`, etc.) are inherited unchanged with identical
 signatures and return types.
 
-fib-mcp adds the following fibjs-native transport connection methods:
+fib-mcp adds the following transport connection methods:
 
 #### `connectStdio(command, args?, options?): Promise<void>`
 Spawn a process and connect via stdio (SDK transport).
 
 #### `connectHttp(url, options?): Promise<void>`
-Connect via Streamable HTTP (SDK transport).
+Connect via the SDK Streamable HTTP transport.
 
 #### `connectSse(sseUrl, messageUrl?, options?): Promise<void>`
 Connect via fibjs SSE + HTTP POST transport.
@@ -199,6 +202,7 @@ Options:
 ## Testing
 
 ```bash
+fibjs test/all.test.ts
 fibjs --test test/integration_test.ts
 fibjs --test test/edge_cases_test.ts
 ```
