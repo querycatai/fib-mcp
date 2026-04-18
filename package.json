@@ -1,0 +1,13 @@
+{
+  "name": "fib-mcp",
+  "version": "0.1.0",
+  "description": "MCP (Model Context Protocol) client/server for fibjs with stdio/http/sse/ws transport",
+  "main": "index.ts",
+  "type": "module",
+  "scripts": {
+    "test": "fibjs --test test/*.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  }
+}
