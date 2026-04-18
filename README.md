@@ -22,6 +22,13 @@ TypeScript runs directly on fibjs; no compile step is required.
 ## Installation
 
 ```bash
+fibjs --install fib-mcp
+```
+
+## Quick Start
+
+### Server - HTTP
+
 ```ts
 import http from 'http';
 import { McpServer } from 'fib-mcp';
