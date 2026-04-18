@@ -27,7 +27,7 @@ fibjs --install fib-mcp
 
 ## Quick Start
 
-### Server
+### Server — HTTP
 
 ```ts
 import http from 'http';
@@ -39,18 +39,10 @@ server.tool('ping', {}, async () => ({
   content: [{ type: 'text', text: 'pong' }],
 }));
 
-// Mount transports into your own http.Server:
-const { sse, message } = server.sseHandlers();
 const svr = new http.Server(3000, {
-  '/mcp':         server.wsHandler(),
-  '/mcp/sse':     sse,
-  '/mcp/message': message,
-  ...server.httpHandlers({ path: '/mcp-http' }),
+  '/mcp': server.httpHandler(),
 });
 svr.start();
-
-// Or stdio — when the server is spawned by an MCP host:
-await server.listenStdio();
 ```
 
 ### Client — HTTP
@@ -59,12 +51,30 @@ await server.listenStdio();
 import { McpClient } from 'fib-mcp';
 
 const client = new McpClient({ name: 'demo-client', version: '1.0.0' });
-await client.connectHttp('http://127.0.0.1:3000/mcp-http');
+await client.connectHttp('http://127.0.0.1:3000/mcp');
 
 const { tools } = await client.listTools();
 const result = await client.callTool({ name: 'ping', arguments: {} });
 
 await client.close();
+```
+
+### Server — WebSocket
+
+```ts
+import http from 'http';
+import { McpServer } from 'fib-mcp';
+
+const server = new McpServer({ name: 'demo-server', version: '1.0.0' });
+
+server.tool('ping', {}, async () => ({
+  content: [{ type: 'text', text: 'pong' }],
+}));
+
+const svr = new http.Server(3000, {
+  '/mcp': server.wsHandler(),
+});
+svr.start();
 ```
 
 ### Client — WebSocket
@@ -77,6 +87,24 @@ await client.connectWs('ws://127.0.0.1:3000/mcp');
 
 const result = await client.callTool({ name: 'ping', arguments: {} });
 await client.close();
+```
+
+### Server — SSE
+
+```ts
+import http from 'http';
+import { McpServer } from 'fib-mcp';
+
+const server = new McpServer({ name: 'demo-server', version: '1.0.0' });
+
+server.tool('ping', {}, async () => ({
+  content: [{ type: 'text', text: 'pong' }],
+}));
+
+const svr = new http.Server(3000, {
+  '/mcp': server.sseHandlers(),
+});
+svr.start();
 ```
 
 ### Client — SSE
@@ -94,6 +122,20 @@ await client.connectSse('http://127.0.0.1:3000/mcp/sse');
 
 const result = await client.callTool({ name: 'ping', arguments: {} });
 await client.close();
+```
+
+### Server — stdio
+
+```ts
+import { McpServer } from 'fib-mcp';
+
+const server = new McpServer({ name: 'demo-server', version: '1.0.0' });
+
+server.tool('ping', {}, async () => ({
+  content: [{ type: 'text', text: 'pong' }],
+}));
+
+await server.listenStdio();
 ```
 
 ### Client — stdio
@@ -119,6 +161,9 @@ Extends `@modelcontextprotocol/sdk` `McpServer`. All SDK methods (`tool`, `resou
 
 fib-mcp adds the following fibjs-native transport methods:
 
+Note: a single `McpServer` instance should bind only one network transport (`ws`, `sse`, or `http`).
+If you need multiple network protocols, create separate `McpServer` instances.
+
 #### `listenStdio(): Promise<void>`
 Connect to stdio. Used when the server is spawned by an MCP host.
 
@@ -129,19 +174,28 @@ Returns a fibjs WebSocket upgrade handler for use in a route map.
 const svr = new http.Server(3000, { '/mcp': server.wsHandler() });
 ```
 
-#### `sseHandlers(): { sse: Handler; message: Handler }`
-Returns SSE route handlers (SSE GET + POST message endpoint).
+#### `sseHandlers(): Record<string, Handler>`
+Returns SSE route handlers for nested fibjs routing (SSE GET + POST message endpoint).
 
 ```ts
-const { sse, message } = server.sseHandlers();
-const svr = new http.Server(3000, { '/mcp/sse': sse, '/mcp/message': message });
+const svr = new http.Server(3000, { '/mcp': server.sseHandlers() });
 ```
 
 The server automatically sends an `endpoint` event on connect, so clients can
 discover the POST URL without it being pre-configured.
 
+#### `httpHandler(options?): Handler`
+Returns an HTTP POST handler for mounting at a route chosen by your outer router.
+
+```ts
+const svr = new http.Server(3000, { '/mcp': server.httpHandler() });
+```
+
+Options:
+- `timeoutMs?`: request timeout in ms (default: `30000`)
+
 #### `httpHandlers(options?): Record<string, Handler>`
-Returns a fibjs route map for JSON-RPC over HTTP POST.
+Returns a flat fibjs route map for JSON-RPC over HTTP POST.
 
 ```ts
 const svr = new http.Server(3000, server.httpHandlers({ path: '/mcp' }));

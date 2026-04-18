@@ -18,12 +18,9 @@
  *   await server.listenStdio();
  *
  *   // Or mount into your own http.Server:
- *   const svr = new http.Server(3000, {
- *     '/mcp':         server.wsHandler(),
- *     '/mcp/sse':     server.sseHandlers().sse,
- *     '/mcp/message': server.sseHandlers().message,
- *     ...server.httpHandlers({ path: '/mcp' }),
- *   });
+ *   const svr = new http.Server(3000, { '/mcp': server.httpHandler() });
+ *
+ *   // Use a separate McpServer instance for ws or sse transports.
  */
 
 import { WebSocketServerTransport } from './ws';
@@ -39,6 +36,8 @@ import { StdioServerTransport as SdkStdioServerTransport } from '@modelcontextpr
  *
  * Extends @modelcontextprotocol/sdk McpServer with fibjs-native transport
  * handler methods. All SDK methods are available directly on this class.
+ *
+ * A single McpServer instance should bind only one network transport.
  */
 export class McpServer extends (SdkMcpServer as any) {
     constructor(info: { name: string; version: string }, options: any = {}) {
@@ -76,10 +75,9 @@ export class McpServer extends (SdkMcpServer as any) {
      * Returns SSE route handlers for mounting into a fibjs route map.
      *
      * Example:
-     *   const { sse, message } = server.sseHandlers();
-     *   const svr = new http.Server(3000, { '/mcp/sse': sse, '/mcp/message': message });
+     *   const svr = new http.Server(3000, { '/mcp': server.sseHandlers() });
      */
-    sseHandlers(): { sse: any; message: any } {
+    sseHandlers(): Record<string, any> {
         const transport = new SseServerTransport();
         const handlers = transport.handlers();
         this.connect(transport).catch(function (err: any) {
@@ -87,24 +85,41 @@ export class McpServer extends (SdkMcpServer as any) {
                 transport.onerror(err instanceof Error ? err : new Error(String(err)));
             }
         });
-        return handlers;
+
+        return {
+            '/sse': handlers.sse,
+            '/message': handlers.message,
+        };
     }
 
     /**
-     * Returns HTTP route handlers for mounting into a fibjs route map.
+     * Returns an HTTP POST handler for mounting into a fibjs route map.
      *
      * Example:
-     *   const svr = new http.Server(3000, server.httpHandlers({ path: '/mcp' }));
+     *   const svr = new http.Server(3000, { '/mcp': server.httpHandler() });
      */
-    httpHandlers(options: HttpServerTransportOptions = {}): Record<string, any> {
+    httpHandler(options: Omit<HttpServerTransportOptions, 'path'> = {}): any {
         const transport = new HttpServerTransport(options);
-        const routes = transport.routes();
+        const handler = transport.handler();
         this.connect(transport).catch(function (err: any) {
             if (transport.onerror) {
                 transport.onerror(err instanceof Error ? err : new Error(String(err)));
             }
         });
-        return routes;
+        return handler;
+    }
+
+    /**
+     * Returns a flat HTTP route map for backward-compatible mounting.
+     *
+     * Example:
+     *   const svr = new http.Server(3000, server.httpHandlers({ path: '/mcp' }));
+     */
+    httpHandlers(options: HttpServerTransportOptions = {}): Record<string, any> {
+        const path = options.path || '/mcp';
+        return {
+            [path]: this.httpHandler({ timeoutMs: options.timeoutMs }),
+        };
     }
 }
 

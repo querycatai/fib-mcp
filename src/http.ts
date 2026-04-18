@@ -39,7 +39,7 @@ export class HttpServerTransport extends Transport {
         return this._path;
     }
 
-    routes(): Record<string, any> {
+    handler(): any {
         const self = this;
 
         const postHandler = function (req: any) {
@@ -52,14 +52,16 @@ export class HttpServerTransport extends Transport {
             req.response.write('');
         };
 
-        const routeHandler = function (req: any) {
+        return function (req: any) {
             const method = String(req.method || 'GET').toUpperCase();
             if (method === 'POST') return postHandler(req);
             return getHandler(req);
         };
+    }
 
+    routes(): Record<string, any> {
         return {
-            [this._path]: routeHandler,
+            [this._path]: this.handler(),
         };
     }
 

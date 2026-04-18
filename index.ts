@@ -11,7 +11,8 @@
  *     server.listenStdio()          – communicate via process stdin/stdout
  *     server.wsHandler()            – create a WebSocket route handler
  *     server.sseHandlers()          – create SSE + POST route handlers
- *     server.httpHandlers()         – create HTTP POST route handlers
+ *     server.httpHandler()          – create an HTTP POST route handler
+ *     server.httpHandlers()         – create a flat HTTP POST route map
  *     server.connect(transport)     – connect to any Transport
  *
  *   Client:

@@ -53,7 +53,7 @@ describe('fib-mcp edge cases', () => {
         return { content: [{ type: 'text', text: 'never' }] };
       });
 
-      httpServer = new http.Server(port, server.httpHandlers({ path: '/mcp', timeoutMs: 200 }));
+      httpServer = new http.Server(port, { '/mcp': server.httpHandler({ timeoutMs: 200 }) });
       httpServer.start();
       trackCleanup(() => {
         if (!httpServer) return;
@@ -192,8 +192,7 @@ describe('fib-mcp edge cases', () => {
         content: [{ type: 'text', text: 'ok' }],
       }));
 
-      const { sse, message } = server.sseHandlers();
-      httpServer = new http.Server(port, { '/mcp/sse': sse, '/mcp/message': message });
+      httpServer = new http.Server(port, { '/mcp': server.sseHandlers() });
       httpServer.start();
       trackCleanup(() => {
         if (!httpServer) return;

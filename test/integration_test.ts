@@ -93,7 +93,7 @@ describe('fib-mcp integration', () => {
                 content: [{ type: 'text', text: 'ok-http' }],
             }));
 
-            httpServer = new http.Server(port, server.httpHandlers({ path: '/mcp' }));
+            httpServer = new http.Server(port, { '/mcp': server.httpHandler() });
             httpServer.start();
             trackCleanup(() => {
                 if (!httpServer) return;
@@ -198,8 +198,7 @@ describe('fib-mcp integration', () => {
                 content: [{ type: 'text', text: 'ok' }],
             }));
 
-            const { sse, message } = server.sseHandlers();
-            httpServer = new http.Server(port, { [ssePath]: sse, [msgPath]: message });
+            httpServer = new http.Server(port, { '/mcp': server.sseHandlers() });
             httpServer.start();
             trackCleanup(() => {
                 if (!httpServer) return;
@@ -249,7 +248,9 @@ describe('fib-mcp integration', () => {
                 content: [{ type: 'text', text: 'ok-http-handler' }],
             }));
 
-            const routes = server.httpHandlers({ path: '/mcp' });
+            const routes = {
+                '/mcp': server.httpHandler(),
+            };
             let host = new http.Server(port, routes);
             host.start();
             trackCleanup(() => {
@@ -285,10 +286,8 @@ describe('fib-mcp integration', () => {
                 content: [{ type: 'text', text: 'ok-sse-handler' }],
             }));
 
-            const sse = server.sseHandlers();
             const routes = {
-                '/mcp/sse': sse.sse,
-                '/mcp/message': sse.message,
+                '/mcp': server.sseHandlers(),
             };
             let host = new http.Server(port, routes);
             host.start();
