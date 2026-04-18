@@ -1,6 +1,7 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'assert';
 import coroutine from 'coroutine';
+import http from 'http';
 
 import { McpServer } from '../index';
 import { WebSocketServerTransport } from '../src/ws';
@@ -52,7 +53,8 @@ describe('fib-mcp edge cases', () => {
         return { content: [{ type: 'text', text: 'never' }] };
       });
 
-      httpServer = server.listenHttp(port, { path: '/mcp', timeoutMs: 200 });
+      httpServer = new http.Server(port, server.httpHandlers({ path: '/mcp', timeoutMs: 200 }));
+      httpServer.start();
       trackCleanup(() => {
         if (!httpServer) return;
         try { httpServer.stop(); } catch (_) {}
@@ -190,7 +192,9 @@ describe('fib-mcp edge cases', () => {
         content: [{ type: 'text', text: 'ok' }],
       }));
 
-      httpServer = server.listenSse(port, '/mcp/sse', '/mcp/message');
+      const { sse, message } = server.sseHandlers();
+      httpServer = new http.Server(port, { '/mcp/sse': sse, '/mcp/message': message });
+      httpServer.start();
       trackCleanup(() => {
         if (!httpServer) return;
         try { httpServer.stop(); } catch (_) {}

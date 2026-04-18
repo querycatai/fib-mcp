@@ -9,8 +9,9 @@
  *
  *   Server:
  *     server.listenStdio()          – communicate via process stdin/stdout
- *     server.listenWs(port, path)   – start WebSocket HTTP server
- *     server.listenSse(port, ...)   – start SSE + POST HTTP server
+ *     server.wsHandler()            – create a WebSocket route handler
+ *     server.sseHandlers()          – create SSE + POST route handlers
+ *     server.httpHandlers()         – create HTTP POST route handlers
  *     server.connect(transport)     – connect to any Transport
  *
  *   Client:
