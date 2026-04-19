@@ -4,6 +4,7 @@ import coroutine from 'coroutine';
 import http from 'http';
 
 import { McpServer } from '../index';
+import { createSessionId } from '../src/base';
 import { WebSocketServerTransport } from '../src/ws';
 
 const basePort = coroutine.vmid * 10000;
@@ -28,6 +29,21 @@ async function runCleanupStack(): Promise<void> {
 describe('fib-mcp edge cases', () => {
   after(async () => {
     await runCleanupStack();
+  });
+
+  describe('session id generation', () => {
+    it('creates unique session ids under high-frequency generation', () => {
+      const generated = new Set<string>();
+
+      for (let index = 0; index < 10000; index += 1) {
+        const sessionId = createSessionId();
+        assert.ok(sessionId.startsWith('mcp-'));
+        assert.equal(generated.has(sessionId), false);
+        generated.add(sessionId);
+      }
+
+      assert.equal(generated.size, 10000);
+    });
   });
 
   describe('http transport edge cases', () => {

@@ -252,28 +252,37 @@ Options:
 For the special case where one WebSocket connection must carry bidirectional MCP calls,
 use `BidirectionalSession`.
 
-It internally creates the two logical MCP sides needed for one shared WebSocket,
-without exposing that middle layer in the public API.
+One `BidirectionalSession` instance owns one shared `McpServer` definition,
+while `handler()` accepts many WebSocket connections for that definition.
 
-For most cases, you only need to prepare the local `McpServer`.
-`BidirectionalSession.handler(server)` and `BidirectionalSession.open(url, server)` wrap the raw WebSocket setup for you.
+Each accepted connection gets its own injected `client`, and tool callbacks receive it through
+the second argument.
 
 Server side:
 
 ```ts
 import http from 'http';
-import { BidirectionalSession, McpServer } from 'fib-mcp';
+import { BidirectionalSession } from 'fib-mcp';
 
-const localServer = new McpServer({ name: 'local-server', version: '1.0.0' });
+const session = new BidirectionalSession(
+  { name: 'local-server', version: '1.0.0' },
+  { clientInfo: { name: 'remote-client', version: '1.0.0' } }
+);
 
-localServer.tool('ping', {}, async () => ({
+session.tool('ping', {}, async (_args, _ctx) => ({
   content: [{ type: 'text', text: 'pong' }],
 }));
 
+session.tool('server.proxyEcho', {}, async (_args, ctx) => {
+  const result = await ctx.client.callTool({ name: 'echo', arguments: {} });
+
+  return {
+    content: [{ type: 'text', text: result.content[0].text }],
+  };
+});
+
 const httpServer = new http.Server(3000, {
-  '/mcp': BidirectionalSession.handler(localServer, {
-    clientInfo: { name: 'remote-client', version: '1.0.0' },
-  }),
+  '/mcp': session.handler(),
 });
 
 httpServer.start();
@@ -282,28 +291,45 @@ httpServer.start();
 Client side:
 
 ```ts
-import { BidirectionalSession, McpServer } from 'fib-mcp';
+import { BidirectionalSession } from 'fib-mcp';
 
-const peerServer = new McpServer({ name: 'peer-server', version: '1.0.0' });
+const session = new BidirectionalSession(
+  { name: 'peer-server', version: '1.0.0' },
+  { clientInfo: { name: 'peer-client', version: '1.0.0' } }
+);
 
-peerServer.tool('echo', {}, async () => ({
+session.tool('echo', {}, async (_args, _ctx) => ({
   content: [{ type: 'text', text: 'echo-from-peer' }],
 }));
 
-const session = await BidirectionalSession.open('ws://127.0.0.1:3000/mcp', peerServer, {
-  clientInfo: { name: 'peer-client', version: '1.0.0' },
-});
+const connection = await session.open('ws://127.0.0.1:3000/mcp');
 
-const result = await session.client.callTool({ name: 'ping', arguments: {} });
+const result = await connection.client.callTool({ name: 'ping', arguments: {} });
 console.log(result.content[0].text);
+
+const proxied = await connection.client.callTool({ name: 'server.proxyEcho', arguments: {} });
+console.log(proxied.content[0].text);
 
 await session.close();
 ```
 
-If you need lower-level control, `BidirectionalSession.connect(ws, server)` still accepts an already opened WebSocket object.
+In `session.tool(name, schema, handler)`, the handler receives:
+
+- the parsed tool arguments as the first parameter
+- `{ client, extra }` as the second parameter
+
+Use `ctx.client` when the local server needs to call tools exposed by the peer on the same WebSocket session.
+
+The raw `McpServer` instance is available as `session.server` if you also need SDK methods such as
+`resource()` or `prompt()`.
+
+If you need lower-level control, `session.connect(ws)` still accepts an already opened WebSocket object.
+
+`handler()` is multi-connection by design. All request routing stays session-scoped internally.
 
 The `ws` object only needs to provide:
 
+- `onopen` (optional)
 - `onmessage`
 - `onerror`
 - `onclose`

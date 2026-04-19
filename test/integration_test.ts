@@ -5,7 +5,7 @@ import path from 'path';
 import http from 'http';
 import { ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
 
-import { McpServer, McpClient } from '../index';
+import { BidirectionalSession, McpServer, McpClient } from '../index';
 
 const basePort = coroutine.vmid * 10000;
 type CleanupFn = () => void | Promise<void>;
@@ -364,5 +364,6 @@ describe('fib-mcp integration', () => {
             const result = await withTimeout(client.callTool({ name: 'status', arguments: {} }), 3000, 'ws handler callTool');
             assert.equal(extractFirstText(result), 'ok-ws-handler');
         });
+
     });
 });
