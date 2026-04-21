@@ -13,10 +13,10 @@ function nextPort(): number {
     return basePort + portOffset;
 }
 
-function createSession(name: string, clientName: string): BidirectionalSession {
+function createSession(name: string, clientName: string, extraOptions: any = {}): BidirectionalSession {
     return new BidirectionalSession(
         { name, version: '1.0.0' },
-        { clientInfo: { name: clientName, version: '1.0.0' } }
+        { clientInfo: { name: clientName, version: '1.0.0' }, ...extraOptions }
     );
 }
 
@@ -42,7 +42,9 @@ describe('BidirectionalSession public APIs', () => {
     it('supports bidirectional MCP calls through handler and open', async () => {
         const port = nextPort();
         const accepted = createSession('accepted-server', 'accepted-client');
-        const peer = createSession('peer-server', 'peer-client');
+        const peer = createSession('peer-server', 'peer-client', {
+            serverInfo: { name: 'peer-server', version: '1.0.0' },
+        });
         let connection: any = null;
         let host: any = null;
 
@@ -101,7 +103,9 @@ describe('BidirectionalSession public APIs', () => {
     it('injects the accepted-side client into tool callbacks', async () => {
         const port = nextPort();
         const accepted = createSession('accepted-server', 'accepted-client');
-        const peer = createSession('peer-server', 'peer-client');
+        const peer = createSession('peer-server', 'peer-client', {
+            serverInfo: { name: 'peer-server', version: '1.0.0' },
+        });
         let connection: any = null;
         let host: any = null;
 
@@ -140,7 +144,9 @@ describe('BidirectionalSession public APIs', () => {
     it('supports reverse tool calls from injected accepted-side client', async () => {
         const port = nextPort();
         const accepted = createSession('accepted-server', 'accepted-client');
-        const peer = createSession('peer-server', 'peer-client');
+        const peer = createSession('peer-server', 'peer-client', {
+            serverInfo: { name: 'peer-server', version: '1.0.0' },
+        });
         let connection: any = null;
         let host: any = null;
 
@@ -188,11 +194,85 @@ describe('BidirectionalSession public APIs', () => {
         }
     });
 
+    it('enables reverse calls when server info is provided', async () => {
+        const port = nextPort();
+        const accepted = createSession('accepted-server', 'accepted-client');
+        const peer = createSession('peer-server', 'peer-client', {
+            serverInfo: { name: 'peer-server', version: '1.0.0' },
+        });
+        let connection: any = null;
+        let host: any = null;
+
+        accepted.tool('server.proxy', {}, async (_args: any, ctx: any) => {
+            const nested = await withTimeout(
+                ctx.client.callTool({ name: 'peer.echo', arguments: {} }),
+                3000,
+                'accepted reverse call by auto negotiation'
+            );
+
+            return {
+                content: [{ type: 'text', text: `proxy:${extractFirstText(nested)}` }],
+            };
+        });
+
+        peer.tool('peer.echo', {}, async () => ({
+            content: [{ type: 'text', text: 'echo-from-peer' }],
+        }));
+
+        try {
+            host = new http.Server(port, {
+                '/mcp': accepted.handler(),
+            });
+            host.start();
+            coroutine.sleep(50);
+
+            connection = await withTimeout(peer.open(`ws://127.0.0.1:${port}/mcp`), 3000, 'open with auto reverse negotiation');
+
+            const result = await withTimeout(
+                connection.client.callTool({ name: 'server.proxy', arguments: {} }),
+                3000,
+                'reverse call via auto negotiation'
+            );
+
+            assert.equal(extractFirstText(result), 'proxy:echo-from-peer');
+        } finally {
+            if (connection) {
+                try { await connection.close(); } catch (_) {}
+            }
+            try { await peer.close(); } catch (_) {}
+            try { await accepted.close(); } catch (_) {}
+            if (host) {
+                try { host.stop(); } catch (_) {}
+            }
+        }
+    });
+
+    it('rejects reverse service declaration without server info', async () => {
+        assert.throws(
+            () => createSession('peer-server', 'peer-client', {
+                clientOptions: {
+                    capabilities: {
+                        extensions: {
+                            'fib-mcp': {
+                                reverseService: true,
+                            },
+                        },
+                    },
+                },
+            }),
+            /requires serverInfo/
+        );
+    });
+
     it('routes each callback to the matching client connection', async () => {
         const port = nextPort();
         const accepted = createSession('accepted-server', 'accepted-client');
-        const peerOne = createSession('peer-one', 'peer-one-client');
-        const peerTwo = createSession('peer-two', 'peer-two-client');
+        const peerOne = createSession('peer-one', 'peer-one-client', {
+            serverInfo: { name: 'peer-one', version: '1.0.0' },
+        });
+        const peerTwo = createSession('peer-two', 'peer-two-client', {
+            serverInfo: { name: 'peer-two', version: '1.0.0' },
+        });
         let connectionOne: any = null;
         let connectionTwo: any = null;
         let host: any = null;
@@ -274,7 +354,9 @@ describe('BidirectionalSession public APIs', () => {
         try {
             for (let index = 0; index < 20; index += 1) {
                 const peerId = `peer-${index}`;
-                const peer = createSession(peerId, `${peerId}-client`);
+                const peer = createSession(peerId, `${peerId}-client`, {
+                    serverInfo: { name: peerId, version: '1.0.0' },
+                });
 
                 peer.tool('peer.identity', {}, async () => ({
                     content: [{ type: 'text', text: peerId }],
@@ -454,6 +536,149 @@ describe('BidirectionalSession public APIs', () => {
                 try { await connection.close(); } catch (_) {}
             }
             try { await peer.close(); } catch (_) {}
+            try { await accepted.close(); } catch (_) {}
+            if (host) {
+                try { host.stop(); } catch (_) {}
+            }
+        }
+    });
+
+    it('falls back to unidirectional mode when reverse is not negotiated', async () => {
+        const port = nextPort();
+        const accepted = createSession('accepted-server', 'accepted-client');
+        const peer = createSession('peer-server', 'peer-client');
+        let connection: any = null;
+        let host: any = null;
+
+        accepted.tool('server.ping', {}, async () => ({
+            content: [{ type: 'text', text: 'pong-from-accepted' }],
+        }));
+
+        accepted.tool('server.proxy-optional', {}, async (_args: any, ctx: any) => {
+            try {
+                await ctx.client.callTool({ name: 'peer.echo', arguments: {} });
+                return { content: [{ type: 'text', text: 'unexpected-reverse-success' }] };
+            } catch (error: any) {
+                return { content: [{ type: 'text', text: `reverse-disabled:${String(error?.message || error)}` }] };
+            }
+        });
+
+        peer.tool('peer.echo', {}, async () => ({
+            content: [{ type: 'text', text: 'echo-from-peer' }],
+        }));
+
+        try {
+            host = new http.Server(port, {
+                '/mcp': accepted.handler(),
+            });
+            host.start();
+            coroutine.sleep(50);
+
+            connection = await withTimeout(peer.open(`ws://127.0.0.1:${port}/mcp`), 3000, 'open without reverse negotiation');
+
+            const ping = await withTimeout(
+                connection.client.callTool({ name: 'server.ping', arguments: {} }),
+                3000,
+                'normal forward call in unidirectional mode'
+            );
+            assert.equal(extractFirstText(ping), 'pong-from-accepted');
+
+            const proxy = await withTimeout(
+                connection.client.callTool({ name: 'server.proxy-optional', arguments: {} }),
+                3000,
+                'reverse call should be blocked without negotiation'
+            );
+            const proxyText = extractFirstText(proxy);
+            assert.ok(proxyText.indexOf('reverse-disabled:') === 0, `proxyText=${proxyText}`);
+        } finally {
+            if (connection) {
+                try { await connection.close(); } catch (_) {}
+            }
+            try { await peer.close(); } catch (_) {}
+            try { await accepted.close(); } catch (_) {}
+            if (host) {
+                try { host.stop(); } catch (_) {}
+            }
+        }
+    });
+
+    it('supports forward calls from a normal MCP ws client', async () => {
+        const port = nextPort();
+        const accepted = createSession('accepted-server', 'accepted-client');
+        const client = new McpClient({ name: 'plain-client', version: '1.0.0' });
+        let host: any = null;
+
+        accepted.tool('server.ping', {}, async () => ({
+            content: [{ type: 'text', text: 'pong-from-accepted' }],
+        }));
+
+        try {
+            host = new http.Server(port, {
+                '/mcp': accepted.handler(),
+            });
+            host.start();
+            coroutine.sleep(50);
+
+            await withTimeout(
+                client.connectWs(`ws://127.0.0.1:${port}/mcp`),
+                3000,
+                'normal ws client connect to bidirectional handler'
+            );
+
+            const result = await withTimeout(
+                client.callTool({ name: 'server.ping', arguments: {} }),
+                3000,
+                'normal ws client forward call'
+            );
+
+            assert.equal(extractFirstText(result), 'pong-from-accepted');
+        } finally {
+            try { await client.close(); } catch (_) {}
+            try { await accepted.close(); } catch (_) {}
+            if (host) {
+                try { host.stop(); } catch (_) {}
+            }
+        }
+    });
+
+    it('blocks reverse calls when using a normal MCP ws client', async () => {
+        const port = nextPort();
+        const accepted = createSession('accepted-server', 'accepted-client');
+        const client = new McpClient({ name: 'plain-client', version: '1.0.0' });
+        let host: any = null;
+
+        accepted.tool('server.proxy-plain', {}, async (_args: any, ctx: any) => {
+            try {
+                await ctx.client.callTool({ name: 'peer.echo', arguments: {} });
+                return { content: [{ type: 'text', text: 'unexpected-reverse-success' }] };
+            } catch (error: any) {
+                return { content: [{ type: 'text', text: `reverse-disabled:${String(error?.message || error)}` }] };
+            }
+        });
+
+        try {
+            host = new http.Server(port, {
+                '/mcp': accepted.handler(),
+            });
+            host.start();
+            coroutine.sleep(50);
+
+            await withTimeout(
+                client.connectWs(`ws://127.0.0.1:${port}/mcp`),
+                3000,
+                'normal ws client connect for reverse blocked check'
+            );
+
+            const result = await withTimeout(
+                client.callTool({ name: 'server.proxy-plain', arguments: {} }),
+                3000,
+                'normal ws client reverse should be blocked'
+            );
+
+            const resultText = extractFirstText(result);
+            assert.ok(resultText.indexOf('reverse-disabled:') === 0, `resultText=${resultText}`);
+        } finally {
+            try { await client.close(); } catch (_) {}
             try { await accepted.close(); } catch (_) {}
             if (host) {
                 try { host.stop(); } catch (_) {}

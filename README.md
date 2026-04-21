@@ -249,16 +249,50 @@ Options:
 
 ## Bidirectional Session
 
-For the special case where one WebSocket connection must carry bidirectional MCP calls,
-use `BidirectionalSession`.
+Use `BidirectionalSession` when one WebSocket connection needs to carry:
 
-One `BidirectionalSession` instance owns one shared `McpServer` definition,
-while `handler()` accepts many WebSocket connections for that definition.
+- normal forward MCP calls (`client -> server`)
+- optional reverse MCP calls (`server -> client`) on the same socket
 
-Each accepted connection gets its own injected `client`, and tool callbacks receive it through
-the second argument.
+One `BidirectionalSession` owns one shared `McpServer` definition, and `handler()` accepts multiple
+WebSocket connections for that definition.
 
-Server side:
+### Constructor
+
+```ts
+const session = new BidirectionalSession(serverIdentity, {
+  clientInfo,
+  serverInfo,
+  clientOptions,
+  serverOptions,
+});
+```
+
+Options:
+
+- `clientInfo`: local client identity used by the internal `McpClient`
+- `serverInfo`: remote server identity; also enables advertising reverse service capability on initialize
+- `clientOptions`: passed to internal `McpClient`
+- `serverOptions`: passed to internal `McpServer`
+
+Constraint:
+
+- Declaring `capabilities.extensions['fib-mcp'].reverseService = true` in `clientOptions` requires `serverInfo`.
+- If `serverInfo` is omitted while declaring that capability, `BidirectionalSession` constructor throws an error.
+
+Recommendation:
+
+- keep both sides using the same option shape: `{ clientInfo, serverInfo }`
+
+### Behavior Model
+
+- Reverse availability is decided per session id from peer initialize capabilities.
+- If peer initialize includes `capabilities.extensions['fib-mcp'].reverseService = true`, reverse is enabled for that session.
+- If peer does not advertise that capability, reverse calls are blocked for that session.
+- Providing `serverInfo` makes the local side advertise reverse service capability during initialize.
+- Omitting `serverInfo` keeps local behavior as normal one-way MCP ws (forward works, reverse blocked by peers), and explicit reverse capability declaration is rejected.
+
+### Server Example
 
 ```ts
 import http from 'http';
@@ -266,19 +300,19 @@ import { BidirectionalSession } from 'fib-mcp';
 
 const session = new BidirectionalSession(
   { name: 'local-server', version: '1.0.0' },
-  { clientInfo: { name: 'remote-client', version: '1.0.0' } }
+  {
+    clientInfo: { name: 'local-client', version: '1.0.0' },
+    serverInfo: { name: 'remote-server', version: '1.0.0' },
+  }
 );
 
-session.tool('ping', {}, async (_args, _ctx) => ({
+session.tool('ping', {}, async () => ({
   content: [{ type: 'text', text: 'pong' }],
 }));
 
 session.tool('server.proxyEcho', {}, async (_args, ctx) => {
   const result = await ctx.client.callTool({ name: 'echo', arguments: {} });
-
-  return {
-    content: [{ type: 'text', text: result.content[0].text }],
-  };
+  return { content: [{ type: 'text', text: result.content[0].text }] };
 });
 
 const httpServer = new http.Server(3000, {
@@ -288,53 +322,54 @@ const httpServer = new http.Server(3000, {
 httpServer.start();
 ```
 
-Client side:
+### Peer Example
 
 ```ts
 import { BidirectionalSession } from 'fib-mcp';
 
 const session = new BidirectionalSession(
   { name: 'peer-server', version: '1.0.0' },
-  { clientInfo: { name: 'peer-client', version: '1.0.0' } }
+  {
+    clientInfo: { name: 'peer-client', version: '1.0.0' },
+    serverInfo: { name: 'local-server', version: '1.0.0' },
+  }
 );
 
-session.tool('echo', {}, async (_args, _ctx) => ({
+session.tool('echo', {}, async () => ({
   content: [{ type: 'text', text: 'echo-from-peer' }],
 }));
 
 const connection = await session.open('ws://127.0.0.1:3000/mcp');
 
-const result = await connection.client.callTool({ name: 'ping', arguments: {} });
-console.log(result.content[0].text);
-
+const ping = await connection.client.callTool({ name: 'ping', arguments: {} });
 const proxied = await connection.client.callTool({ name: 'server.proxyEcho', arguments: {} });
+
+console.log(ping.content[0].text);
 console.log(proxied.content[0].text);
 
 await session.close();
 ```
 
-In `session.tool(name, schema, handler)`, the handler receives:
+### Tool Callback Context
 
-- the parsed tool arguments as the first parameter
-- `{ client, extra }` as the second parameter
+`session.tool(name, schema, handler)` callback parameters:
 
-Use `ctx.client` when the local server needs to call tools exposed by the peer on the same WebSocket session.
+- first argument: parsed tool args
+- second argument: `{ client, extra }`
 
-The raw `McpServer` instance is available as `session.server` if you also need SDK methods such as
-`resource()` or `prompt()`.
+Use `ctx.client` to call tools exposed by the peer on the same WebSocket session.
 
-If you need lower-level control, `session.connect(ws)` still accepts an already opened WebSocket object.
+### Compatibility With Normal MCP ws Client
 
-`handler()` is multi-connection by design. All request routing stays session-scoped internally.
+`handler()` is compatible with a plain `McpClient.connectWs(...)` client:
 
-The `ws` object only needs to provide:
+- normal forward calls are supported
+- reverse calls are not available unless reverse channel is enabled for that connection
 
-- `onopen` (optional)
-- `onmessage`
-- `onerror`
-- `onclose`
-- `send(data: string)`
-- `close()`
+### Low-level APIs
+
+- raw server instance: `session.server`
+- route handler: `session.handler()`
 
 ## Notifications
 
