@@ -51,7 +51,7 @@ svr.start();
 import { McpClient } from 'fib-mcp';
 
 const client = new McpClient({ name: 'demo-client', version: '1.0.0' });
-await client.connectHttp('http://127.0.0.1:3000/mcp');
+await client.connect({ transport: 'streamable-http', url: 'http://127.0.0.1:3000/mcp' });
 
 const { tools } = await client.listTools();
 const result = await client.callTool({ name: 'ping', arguments: {} });
@@ -84,7 +84,7 @@ svr.start();
 import { McpClient } from 'fib-mcp';
 
 const client = new McpClient({ name: 'demo-client', version: '1.0.0' });
-await client.connectWs('ws://127.0.0.1:3000/mcp');
+await client.connect({ transport: 'ws', url: 'ws://127.0.0.1:3000/mcp' });
 
 const result = await client.callTool({ name: 'ping', arguments: {} });
 await client.close();
@@ -116,10 +116,10 @@ import { McpClient } from 'fib-mcp';
 const client = new McpClient({ name: 'demo-client', version: '1.0.0' });
 
 // messageUrl auto-discovered from server's `endpoint` event:
-await client.connectSse('http://127.0.0.1:3000/mcp/sse');
+await client.connect({ transport: 'sse', url: 'http://127.0.0.1:3000/mcp/sse' });
 
 // Or with an explicit messageUrl:
-// await client.connectSse('http://127.0.0.1:3000/mcp/sse', 'http://127.0.0.1:3000/mcp/message');
+// await client.connect({ transport: 'sse', url: 'http://127.0.0.1:3000/mcp/sse', messageUrl: 'http://127.0.0.1:3000/mcp/message' });
 
 const result = await client.callTool({ name: 'ping', arguments: {} });
 await client.close();
@@ -146,8 +146,11 @@ import { McpClient } from 'fib-mcp';
 
 const client = new McpClient({ name: 'demo-client', version: '1.0.0' });
 
-// Spawn an MCP server process and connect via stdio:
-await client.connectStdio('fibjs', ['my_mcp_server.ts']);
+// Spawn an MCP server script via stdio:
+await client.connect({ transport: 'stdio', path: './my_mcp_server.ts' });
+
+// Or connect to an explicit command:
+// await client.connect({ transport: 'stdio', command: 'fibjs', args: ['my_mcp_server.ts'] });
 
 const result = await client.callTool({ name: 'ping', arguments: {} });
 await client.close();
@@ -217,14 +220,20 @@ signatures and return types.
 
 fib-mcp adds the following transport connection methods:
 
-#### `connectStdio(command, args?, options?): Promise<void>`
-Spawn a process and connect via stdio (SDK transport).
+#### `connect(config | transport): Promise<void>`
+Unified client entry point.
 
-#### `connectHttp(url, options?): Promise<void>`
-Connect via the SDK Streamable HTTP transport.
+Use transport descriptor objects aligned with MCP Registry transport style:
 
-#### `connectSse(sseUrl, messageUrl?, options?): Promise<void>`
-Connect via fibjs SSE + HTTP POST transport.
+- `{ transport: 'streamable-http', url, options? }`
+- `{ transport: 'sse', url, messageUrl?, options? }`
+- `{ transport: 'ws' | 'websocket', url, options? }`
+- `{ transport: 'stdio', path, options? }`
+- `{ transport: 'stdio', command, args?, options? }`
+
+Passing a transport object still works and is forwarded to the SDK `connect(transport)`.
+
+SSE notes:
 
 If `messageUrl` is omitted, the client waits for the server's `endpoint` SSE event
 and discovers the POST URL automatically (standard MCP SSE protocol).
@@ -233,10 +242,7 @@ Options:
 - `headers?`: extra request headers
 - `method?`: POST method override (default: `POST`)
 
-#### `connectWs(url, options?): Promise<void>`
-Connect via fibjs WebSocket transport.
-
-Options:
+WebSocket options:
 - `protocols?`: WebSocket sub-protocols
 
 ## Transport Notes
@@ -300,16 +306,17 @@ Handler context:
 WebSocket convenience:
 
 - `wsHandler()` for server route mounting
-- `connectWs(url, options?)` for active side over websocket
+- `connect({ transport: 'ws', url, options? })` for active side over websocket
 
 Stdio convenience:
 
-- `connectStdio(command, args?, options?)` for active side stdio connection
+- `connect({ transport: 'stdio', path, options? })` for active side stdio script launch
+- `connect({ transport: 'stdio', command, args?, options? })` for active side stdio command launch
 - `listenStdio()` for passive side stdio accept
 
 Generic transport:
 
-- `connect(transport)` active side
+- `connect(config)` or `connect(transport)` active side
 - `accept(transport)` passive side
 
 Both return `BidirectionalConnection`:
@@ -343,7 +350,7 @@ const peer = new BidirectionalSession({
   clientInfo: { name: 'peer-client', version: '1.0.0' },
 });
 
-const conn = await peer.connectWs('ws://127.0.0.1:3000/mcp');
+const conn = await peer.connect({ transport: 'ws', url: 'ws://127.0.0.1:3000/mcp' });
 const pong = await conn.client.callTool({ name: 'server.ping', arguments: {} });
 console.log(pong.content[0].text);
 ```
@@ -362,7 +369,7 @@ parent.tool('parent.greet', {}, async () => ({
   content: [{ type: 'text', text: 'hello-from-parent' }],
 }));
 
-const conn = await parent.connectStdio('fibjs', ['./child.ts']);
+const conn = await parent.connect({ transport: 'stdio', command: 'fibjs', args: ['./child.ts'] });
 const echo = await conn.client.callTool({ name: 'child.echo', arguments: {} });
 console.log(echo.content[0].text);
 ```

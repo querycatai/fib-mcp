@@ -48,6 +48,99 @@ describe('fib-mcp integration', () => {
         await runCleanupStack();
     });
 
+    describe('object transport selection', () => {
+        it('supports stdio script path descriptor', async () => {
+            const client = new McpClient({ name: 'auto-stdio-client', version: '1.0.0' });
+            trackCleanup(async () => {
+                try { await client.close(); } catch (_) {}
+            });
+
+            const fixturePath = path.join(process.cwd(), 'test', 'fixtures', 'stdio_server.ts');
+
+            await withTimeout(
+                client.connect({
+                    transport: 'stdio',
+                    path: fixturePath,
+                    options: { cwd: process.cwd() },
+                }),
+                5000,
+                'auto stdio connect'
+            );
+
+            const result = await withTimeout(client.callTool({ name: 'ping', arguments: {} }), 3000, 'auto stdio callTool ping');
+            assert.equal(extractFirstText(result), 'pong-stdio');
+        });
+
+        it('supports explicit descriptors for HTTP, WebSocket, and SSE', async () => {
+            const httpPort = basePort + 3910;
+            const wsPort = basePort + 3911;
+            const ssePort = basePort + 3912;
+
+            const httpMcp = new McpServer({ name: 'auto-http-server', version: '1.0.0' });
+            const wsMcp = new McpServer({ name: 'auto-ws-server', version: '1.0.0' });
+            const sseMcp = new McpServer({ name: 'auto-sse-server', version: '1.0.0' });
+            trackCleanup(async () => {
+                try { await httpMcp.close(); } catch (_) {}
+                try { await wsMcp.close(); } catch (_) {}
+                try { await sseMcp.close(); } catch (_) {}
+            });
+
+            httpMcp.tool('status', {}, async () => ({
+                content: [{ type: 'text', text: 'ok-auto-http' }],
+            }));
+            wsMcp.tool('status', {}, async () => ({
+                content: [{ type: 'text', text: 'ok-auto-ws' }],
+            }));
+            sseMcp.tool('status', {}, async () => ({
+                content: [{ type: 'text', text: 'ok-auto-sse' }],
+            }));
+
+            const httpHost = new http.Server(httpPort, { '/mcp': httpMcp.httpHandler() });
+            const wsHost = new http.Server(wsPort, { '/mcp': wsMcp.wsHandler() });
+            const sseHost = new http.Server(ssePort, { '/mcp': sseMcp.sseHandlers() });
+            httpHost.start();
+            wsHost.start();
+            sseHost.start();
+            trackCleanup(() => {
+                try { httpHost.stop(); } catch (_) {}
+                try { wsHost.stop(); } catch (_) {}
+                try { sseHost.stop(); } catch (_) {}
+            });
+
+            coroutine.sleep(50);
+
+            const httpClient = new McpClient({ name: 'auto-http-client', version: '1.0.0' });
+            const wsClient = new McpClient({ name: 'auto-ws-client', version: '1.0.0' });
+            const sseClient = new McpClient({ name: 'auto-sse-client', version: '1.0.0' });
+            trackCleanup(async () => {
+                try { await httpClient.close(); } catch (_) {}
+                try { await wsClient.close(); } catch (_) {}
+                try { await sseClient.close(); } catch (_) {}
+            });
+
+            await withTimeout(httpClient.connect({ transport: 'streamable-http', url: `http://127.0.0.1:${httpPort}/mcp` }), 3000, 'auto http connect');
+            await withTimeout(wsClient.connect({ transport: 'ws', url: `ws://127.0.0.1:${wsPort}/mcp` }), 3000, 'auto ws connect');
+            await withTimeout(
+                sseClient.connect({ transport: 'sse', url: `http://127.0.0.1:${ssePort}/mcp/sse`, messageUrl: `http://127.0.0.1:${ssePort}/mcp/message` }),
+                3000,
+                'auto sse connect'
+            );
+
+            assert.equal(
+                extractFirstText(await withTimeout(httpClient.callTool({ name: 'status', arguments: {} }), 3000, 'auto http callTool status')),
+                'ok-auto-http'
+            );
+            assert.equal(
+                extractFirstText(await withTimeout(wsClient.callTool({ name: 'status', arguments: {} }), 3000, 'auto ws callTool status')),
+                'ok-auto-ws'
+            );
+            assert.equal(
+                extractFirstText(await withTimeout(sseClient.callTool({ name: 'status', arguments: {} }), 3000, 'auto sse callTool status')),
+                'ok-auto-sse'
+            );
+        });
+    });
+
     describe('stdio transport', () => {
         let client: any = null;
 
@@ -62,8 +155,11 @@ describe('fib-mcp integration', () => {
             const fixturePath = path.join(process.cwd(), 'test', 'fixtures', 'stdio_server.ts');
 
             await withTimeout(
-                client.connectStdio(process.execPath, [fixturePath], {
-                    cwd: process.cwd(),
+                client.connect({
+                    transport: 'stdio',
+                    command: process.execPath,
+                    args: [fixturePath],
+                    options: { cwd: process.cwd() },
                 }),
                 5000,
                 'stdio connect'
@@ -110,7 +206,7 @@ describe('fib-mcp integration', () => {
                 try { await client.close(); } catch (_) {}
                 client = null;
             });
-            await withTimeout(client.connectHttp(`http://127.0.0.1:${port}/mcp`), 3000, 'http connect');
+            await withTimeout(client.connect({ transport: 'streamable-http', url: `http://127.0.0.1:${port}/mcp` }), 3000, 'http connect');
         });
 
         it('can call a tool through HTTP POST', async () => {
@@ -161,7 +257,7 @@ describe('fib-mcp integration', () => {
                 try { await client.close(); } catch (_) {}
                 client = null;
             });
-            await withTimeout(client.connectWs(`ws://127.0.0.1:${port}/mcp`), 3000, 'ws connect');
+            await withTimeout(client.connect({ transport: 'ws', url: `ws://127.0.0.1:${port}/mcp` }), 3000, 'ws connect');
         });
 
         it('can list multiple registered tools', async () => {
@@ -227,10 +323,11 @@ describe('fib-mcp integration', () => {
                 client = null;
             });
             await withTimeout(
-                client.connectSse(
-                    `http://127.0.0.1:${port}${ssePath}`,
-                    `http://127.0.0.1:${port}${msgPath}`
-                ),
+                client.connect({
+                    transport: 'sse',
+                    url: `http://127.0.0.1:${port}${ssePath}`,
+                    messageUrl: `http://127.0.0.1:${port}${msgPath}`,
+                }),
                 3000,
                 'sse connect'
             );
@@ -280,7 +377,7 @@ describe('fib-mcp integration', () => {
                 client = null;
             });
 
-            await withTimeout(client.connectHttp(`http://127.0.0.1:${port}/mcp`), 3000, 'http handler connect');
+            await withTimeout(client.connect({ transport: 'streamable-http', url: `http://127.0.0.1:${port}/mcp` }), 3000, 'http handler connect');
             const result = await withTimeout(client.callTool({ name: 'status', arguments: {} }), 3000, 'http handler callTool');
             assert.equal(extractFirstText(result), 'ok-http-handler');
         });
@@ -319,7 +416,11 @@ describe('fib-mcp integration', () => {
             });
 
             await withTimeout(
-                client.connectSse(`http://127.0.0.1:${port}/mcp/sse`, `http://127.0.0.1:${port}/mcp/message`),
+                client.connect({
+                    transport: 'sse',
+                    url: `http://127.0.0.1:${port}/mcp/sse`,
+                    messageUrl: `http://127.0.0.1:${port}/mcp/message`,
+                }),
                 3000,
                 'sse handler connect'
             );
@@ -360,7 +461,7 @@ describe('fib-mcp integration', () => {
                 client = null;
             });
 
-            await withTimeout(client.connectWs(`ws://127.0.0.1:${port}/mcp`), 3000, 'ws handler connect');
+            await withTimeout(client.connect({ transport: 'ws', url: `ws://127.0.0.1:${port}/mcp` }), 3000, 'ws handler connect');
             const result = await withTimeout(client.callTool({ name: 'status', arguments: {} }), 3000, 'ws handler callTool');
             assert.equal(extractFirstText(result), 'ok-ws-handler');
         });

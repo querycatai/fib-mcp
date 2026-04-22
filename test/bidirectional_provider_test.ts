@@ -85,7 +85,7 @@ describe('BidirectionalSession public APIs', () => {
             coroutine.sleep(50);
 
             connection = await withTimeout(
-                peer.connectWs(`ws://127.0.0.1:${port}/mcp`),
+                peer.connect({ transport: 'ws', url: `ws://127.0.0.1:${port}/mcp` }),
                 3000,
                 'bidirectional open'
             );
@@ -129,7 +129,7 @@ describe('BidirectionalSession public APIs', () => {
             host.start();
             coroutine.sleep(50);
 
-            connection = await withTimeout(peer.connectWs(`ws://127.0.0.1:${port}/mcp`), 3000, 'bidirectional open');
+            connection = await withTimeout(peer.connect({ transport: 'ws', url: `ws://127.0.0.1:${port}/mcp` }), 3000, 'bidirectional open');
 
             const result = await withTimeout(
                 connection.client.callTool({ name: 'server.has-client', arguments: {} }),
@@ -182,7 +182,7 @@ describe('BidirectionalSession public APIs', () => {
             host.start();
             coroutine.sleep(50);
 
-            connection = await withTimeout(peer.connectWs(`ws://127.0.0.1:${port}/mcp`), 3000, 'bidirectional open');
+            connection = await withTimeout(peer.connect({ transport: 'ws', url: `ws://127.0.0.1:${port}/mcp` }), 3000, 'bidirectional open');
 
             const result = await withTimeout(
                 connection.client.callTool({ name: 'server.proxy', arguments: {} }),
@@ -235,7 +235,7 @@ describe('BidirectionalSession public APIs', () => {
             host.start();
             coroutine.sleep(50);
 
-            connection = await withTimeout(peer.connectWs(`ws://127.0.0.1:${port}/mcp`), 3000, 'open with auto reverse negotiation');
+            connection = await withTimeout(peer.connect({ transport: 'ws', url: `ws://127.0.0.1:${port}/mcp` }), 3000, 'open with auto reverse negotiation');
 
             const result = await withTimeout(
                 connection.client.callTool({ name: 'server.proxy', arguments: {} }),
@@ -306,8 +306,8 @@ describe('BidirectionalSession public APIs', () => {
             coroutine.sleep(50);
 
             [connectionOne, connectionTwo] = await Promise.all([
-                withTimeout(peerOne.connectWs(`ws://127.0.0.1:${port}/mcp`), 3000, 'open peer one'),
-                withTimeout(peerTwo.connectWs(`ws://127.0.0.1:${port}/mcp`), 3000, 'open peer two'),
+                withTimeout(peerOne.connect({ transport: 'ws', url: `ws://127.0.0.1:${port}/mcp` }), 3000, 'open peer one'),
+                withTimeout(peerTwo.connect({ transport: 'ws', url: `ws://127.0.0.1:${port}/mcp` }), 3000, 'open peer two'),
             ]);
 
             const [resultOne, resultTwo] = await Promise.all([
@@ -374,7 +374,7 @@ describe('BidirectionalSession public APIs', () => {
 
             const openedConnections = await withTimeout(
                 Promise.all(
-                    peers.map((peer) => peer.connectWs(`ws://127.0.0.1:${port}/mcp`))
+                    peers.map((peer) => peer.connect({ transport: 'ws', url: `ws://127.0.0.1:${port}/mcp` }))
                 ),
                 15000,
                 'open 20 concurrent clients'
@@ -445,7 +445,7 @@ describe('BidirectionalSession public APIs', () => {
             host.start();
             coroutine.sleep(50);
 
-            connection = await withTimeout(peer.connectWs(`ws://127.0.0.1:${port}/mcp`), 3000, 'bidirectional open');
+            connection = await withTimeout(peer.connect({ transport: 'ws', url: `ws://127.0.0.1:${port}/mcp` }), 3000, 'bidirectional open');
 
             const result = await withTimeout(
                 connection.client.callTool({ name: 'server.sessionId', arguments: {} }),
@@ -500,7 +500,7 @@ describe('BidirectionalSession public APIs', () => {
             host.start();
             coroutine.sleep(50);
 
-            connection = await withTimeout(peer.connectWs(`ws://127.0.0.1:${port}/mcp`), 3000, 'bidirectional open');
+            connection = await withTimeout(peer.connect({ transport: 'ws', url: `ws://127.0.0.1:${port}/mcp` }), 3000, 'bidirectional open');
 
             const progressEvents: any[] = [];
             let resolveProgress: (() => void) | null = null;
@@ -571,7 +571,7 @@ describe('BidirectionalSession public APIs', () => {
             coroutine.sleep(50);
 
             await withTimeout(
-                peer.connectWs(`ws://127.0.0.1:${port}/mcp`),
+                peer.connect({ transport: 'ws', url: `ws://127.0.0.1:${port}/mcp` }),
                 3000,
                 'open without reverse negotiation'
             );
@@ -617,7 +617,7 @@ describe('BidirectionalSession public APIs', () => {
             coroutine.sleep(50);
 
             await withTimeout(
-                client.connectWs(`ws://127.0.0.1:${port}/mcp`),
+                client.connect({ transport: 'ws', url: `ws://127.0.0.1:${port}/mcp` }),
                 3000,
                 'normal ws client connect to bidirectional handler'
             );
@@ -661,7 +661,7 @@ describe('BidirectionalSession public APIs', () => {
             coroutine.sleep(50);
 
             await withTimeout(
-                client.connectWs(`ws://127.0.0.1:${port}/mcp`),
+                client.connect({ transport: 'ws', url: `ws://127.0.0.1:${port}/mcp` }),
                 3000,
                 'normal ws client connect for reverse blocked check'
             );
@@ -756,7 +756,7 @@ describe('BidirectionalSession stdio mode', () => {
         let connection: any = null;
         try {
             connection = await withTimeout(
-                parentSession.connectStdio('fibjs', ['test/fixtures/stdio_bidirectional_child.ts']),
+                parentSession.connect({ transport: 'stdio', command: 'fibjs', args: ['test/fixtures/stdio_bidirectional_child.ts'] }),
                 5000,
                 'parent connect via stdio'
             );
@@ -789,7 +789,7 @@ describe('BidirectionalSession stdio mode', () => {
 
         try {
             await withTimeout(
-                plainServer.connectStdio('fibjs', ['test/fixtures/stdio_plain_server.ts']),
+                plainServer.connect({ transport: 'stdio', command: 'fibjs', args: ['test/fixtures/stdio_plain_server.ts'] }),
                 5000,
                 'plain stdio client connect'
             );
@@ -834,7 +834,7 @@ describe('BidirectionalSession stdio mode', () => {
             coroutine.sleep(50);
 
             await withTimeout(
-                plainClient.connectWs(`ws://127.0.0.1:${port}/mcp`),
+                plainClient.connect({ transport: 'ws', url: `ws://127.0.0.1:${port}/mcp` }),
                 3000,
                 'plain http client connect to bidirectional handler'
             );

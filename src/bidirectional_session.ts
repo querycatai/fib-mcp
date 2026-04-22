@@ -82,7 +82,38 @@ export interface BidirectionalSessionOptions {
     serverOptions?: any;
 }
 
-export type BidirectionalConnectWsOptions = WebSocketClientOptions;
+export interface BidirectionalWsConnectOptions {
+    transport: 'ws' | 'websocket';
+    url: string;
+    options?: WebSocketClientOptions;
+}
+
+export interface BidirectionalStdioConnectOptions {
+    transport: 'stdio';
+    command?: string;
+    args?: string[];
+    path?: string;
+    options?: Omit<StdioServerParameters, 'command' | 'args'>;
+}
+
+export type BidirectionalConnectOptions = BidirectionalWsConnectOptions | BidirectionalStdioConnectOptions;
+
+function createBidirectionalClientTransportFromConfig(config: BidirectionalConnectOptions): BidirectionalMessageTransport {
+    if (config.transport === 'ws' || config.transport === 'websocket') {
+        return new WebSocketClientTransport(config.url, config.options);
+    }
+
+    const command = config.command || process.execPath;
+    const args = config.command
+        ? (config.args || [])
+        : [config.path || ''];
+
+    if (!config.command && !config.path) {
+        throw new Error('BidirectionalSession stdio connect requires either command or path');
+    }
+
+    return new SdkStdioClientTransport({ command, args, ...(config.options || {}) });
+}
 
 export type BidirectionalToolExtra = RequestHandlerExtra<ServerRequest, ServerNotification>;
 
@@ -559,23 +590,26 @@ export class BidirectionalSession {
         });
     }
 
-    async connectWs(url: string, options: BidirectionalConnectWsOptions = {}): Promise<BidirectionalConnection> {
-        const transport = new WebSocketClientTransport(url, options);
-        return await this._connect(transport, true);
-    }
-
-    async connectStdio(command: string, args: string[] = [], options: Omit<StdioServerParameters, 'command' | 'args'> = {}): Promise<BidirectionalConnection> {
-        const transport = new SdkStdioClientTransport({ command, args, ...options });
-        return await this._connect(transport, true);
-    }
-
     async listenStdio(): Promise<BidirectionalConnection> {
         const transport = new StdioServerTransport();
         return await this._connect(transport, false);
     }
 
+    async connect(config: BidirectionalConnectOptions): Promise<BidirectionalConnection>;
     async connect(transport: BidirectionalMessageTransport): Promise<BidirectionalConnection> {
-        return await this._connect(transport, true);
+        return this._connect(transport, true);
+    }
+
+    async connect(target: any): Promise<BidirectionalConnection> {
+        if (typeof target === 'object' && target && typeof target.transport === 'string') {
+            return this._connect(createBidirectionalClientTransportFromConfig(target), true);
+        }
+
+        if (target && typeof target === 'object') {
+            return this._connect(target, true);
+        }
+
+        throw new Error('BidirectionalSession.connect requires a transport descriptor object or transport instance');
     }
 
     async accept(transport: BidirectionalMessageTransport): Promise<BidirectionalConnection> {

@@ -16,9 +16,7 @@
  *     server.connect(transport)     – connect to any Transport
  *
  *   Client:
- *     client.connectStdio(cmd, args) – spawn a server process
- *     client.connectWs(url)          – connect via WebSocket
- *     client.connectSse(sseUrl, msgUrl) – connect via SSE
+ *     client.connect(config)         – connect via transport descriptor
  *     client.connect(transport)      – connect to any Transport
  *
  * Low-level transport classes are re-exported for direct use.
@@ -28,7 +26,15 @@
 export { McpServer } from './src/server';
 
 export { McpClient } from './src/client';
-export type { StdioServerParameters, StreamableHTTPClientTransportOptions } from './src/client';
+export type {
+	StdioServerParameters,
+	StreamableHTTPClientTransportOptions,
+	McpClientConnectOptions,
+	McpClientHttpConnectOptions,
+	McpClientWsConnectOptions,
+	McpClientSseConnectOptions,
+	McpClientStdioConnectOptions,
+} from './src/client';
 
 // ── Transport base ────────────────────────────────────────────────────────────
 export { Transport }                                          from './src/base';
@@ -51,7 +57,9 @@ export { BidirectionalSession }                              from './src/bidirec
 export type {
 	BidirectionalMessageTransport,
 	BidirectionalSessionOptions,
-	BidirectionalConnectWsOptions,
+	BidirectionalConnectOptions,
+	BidirectionalWsConnectOptions,
+	BidirectionalStdioConnectOptions,
 	BidirectionalToolExtra,
 	BidirectionalToolContext,
 	BidirectionalToolCallback,
