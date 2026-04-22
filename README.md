@@ -55,6 +55,7 @@ await client.connectHttp('http://127.0.0.1:3000/mcp');
 
 const { tools } = await client.listTools();
 const result = await client.callTool({ name: 'ping', arguments: {} });
+console.log(result.content[0].text);
 
 await client.close();
 ```
@@ -249,137 +250,166 @@ Options:
 
 ## Bidirectional Session
 
-Use `BidirectionalSession` when one WebSocket connection needs to carry:
+`BidirectionalSession` provides transport-agnostic bidirectional MCP over one connection:
 
-- normal forward MCP calls (`client -> server`)
-- optional reverse MCP calls (`server -> client`) on the same socket
+- Forward calls: local side calls peer tools
+- Reverse calls: peer calls local tools through `ctx.client`
+- Session-scoped capability negotiation for reverse channel
+- Backward compatible with plain MCP clients
 
-One `BidirectionalSession` owns one shared `McpServer` definition, and `handler()` accepts multiple
-WebSocket connections for that definition.
+### Constructor (New API)
 
-### Constructor
+`BidirectionalSession` now uses a single options object.
 
 ```ts
-const session = new BidirectionalSession(serverIdentity, {
-  clientInfo,
-  serverInfo,
-  clientOptions,
-  serverOptions,
+import { BidirectionalSession } from 'fib-mcp';
+
+const session = new BidirectionalSession({
+  serverInfo: { name: 'my-server', version: '1.0.0' },
+  clientInfo: { name: 'my-client', version: '1.0.0' },
+  clientOptions: {},
+  serverOptions: {},
 });
 ```
 
 Options:
 
-- `clientInfo`: local client identity used by the internal `McpClient`
-- `serverInfo`: remote server identity; also enables advertising reverse service capability on initialize
-- `clientOptions`: passed to internal `McpClient`
-- `serverOptions`: passed to internal `McpServer`
+- `serverInfo` (required): local server identity
+- `clientInfo` (optional): local client identity, default `bidirectional-client/1.0.0`
+- `clientOptions` (optional): forwarded to internal `McpClient`
+- `serverOptions` (optional): forwarded to internal `McpServer`
 
-Constraint:
+### Tool Callback Context
 
-- Declaring `capabilities.extensions['fib-mcp'].reverseService = true` in `clientOptions` requires `serverInfo`.
-- If `serverInfo` is omitted while declaring that capability, `BidirectionalSession` constructor throws an error.
+```ts
+session.tool('server.proxy', {}, async (_args, ctx) => {
+  const nested = await ctx.client.callTool({ name: 'peer.echo', arguments: {} });
+  return {
+    content: [{ type: 'text', text: nested.content[0].text }],
+  };
+});
+```
 
-Recommendation:
+Handler context:
 
-- keep both sides using the same option shape: `{ clientInfo, serverInfo }`
+- `ctx.client`: peer client bound to current session
+- `ctx.extra`: MCP request metadata (includes `sessionId`)
 
-### Behavior Model
+### Connection APIs
 
-- Reverse availability is decided per session id from peer initialize capabilities.
-- If peer initialize includes `capabilities.extensions['fib-mcp'].reverseService = true`, reverse is enabled for that session.
-- If peer does not advertise that capability, reverse calls are blocked for that session.
-- Providing `serverInfo` makes the local side advertise reverse service capability during initialize.
-- Omitting `serverInfo` keeps local behavior as normal one-way MCP ws (forward works, reverse blocked by peers), and explicit reverse capability declaration is rejected.
+WebSocket convenience:
 
-### Server Example
+- `wsHandler()` for server route mounting
+- `connectWs(url, options?)` for active side over websocket
+
+Stdio convenience:
+
+- `connectStdio(command, args?, options?)` for active side stdio connection
+- `listenStdio()` for passive side stdio accept
+
+Generic transport:
+
+- `connect(transport)` active side
+- `accept(transport)` passive side
+
+Both return `BidirectionalConnection`:
+
+- `connection.client`
+- `connection.sessionId`
+- `connection.close()`
+
+### WebSocket Example
 
 ```ts
 import http from 'http';
 import { BidirectionalSession } from 'fib-mcp';
 
-const session = new BidirectionalSession(
-  { name: 'local-server', version: '1.0.0' },
-  {
-    clientInfo: { name: 'local-client', version: '1.0.0' },
-    serverInfo: { name: 'remote-server', version: '1.0.0' },
-  }
-);
+const accepted = new BidirectionalSession({
+  serverInfo: { name: 'accepted-server', version: '1.0.0' },
+  clientInfo: { name: 'accepted-client', version: '1.0.0' },
+});
 
-session.tool('ping', {}, async () => ({
-  content: [{ type: 'text', text: 'pong' }],
+accepted.tool('server.ping', {}, async () => ({
+  content: [{ type: 'text', text: 'pong-from-accepted' }],
 }));
 
-session.tool('server.proxyEcho', {}, async (_args, ctx) => {
-  const result = await ctx.client.callTool({ name: 'echo', arguments: {} });
-  return { content: [{ type: 'text', text: result.content[0].text }] };
+const host = new http.Server(3000, {
+  '/mcp': accepted.wsHandler(),
+});
+host.start();
+
+const peer = new BidirectionalSession({
+  serverInfo: { name: 'peer-server', version: '1.0.0' },
+  clientInfo: { name: 'peer-client', version: '1.0.0' },
 });
 
-const httpServer = new http.Server(3000, {
-  '/mcp': session.handler(),
-});
-
-httpServer.start();
+const conn = await peer.connectWs('ws://127.0.0.1:3000/mcp');
+const pong = await conn.client.callTool({ name: 'server.ping', arguments: {} });
+console.log(pong.content[0].text);
 ```
 
-### Peer Example
+### Stdio Example
 
 ```ts
 import { BidirectionalSession } from 'fib-mcp';
 
-const session = new BidirectionalSession(
-  { name: 'peer-server', version: '1.0.0' },
-  {
-    clientInfo: { name: 'peer-client', version: '1.0.0' },
-    serverInfo: { name: 'local-server', version: '1.0.0' },
-  }
-);
+const parent = new BidirectionalSession({
+  serverInfo: { name: 'parent-server', version: '1.0.0' },
+  clientInfo: { name: 'parent-client', version: '1.0.0' },
+});
 
-session.tool('echo', {}, async () => ({
-  content: [{ type: 'text', text: 'echo-from-peer' }],
+parent.tool('parent.greet', {}, async () => ({
+  content: [{ type: 'text', text: 'hello-from-parent' }],
 }));
 
-const connection = await session.open('ws://127.0.0.1:3000/mcp');
-
-const ping = await connection.client.callTool({ name: 'ping', arguments: {} });
-const proxied = await connection.client.callTool({ name: 'server.proxyEcho', arguments: {} });
-
-console.log(ping.content[0].text);
-console.log(proxied.content[0].text);
-
-await session.close();
+const conn = await parent.connectStdio('fibjs', ['./child.ts']);
+const echo = await conn.client.callTool({ name: 'child.echo', arguments: {} });
+console.log(echo.content[0].text);
 ```
 
-### Tool Callback Context
+### In-Memory Example
 
-`session.tool(name, schema, handler)` callback parameters:
+```ts
+import { BidirectionalSession } from 'fib-mcp';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 
-- first argument: parsed tool args
-- second argument: `{ client, extra }`
+const left = new BidirectionalSession({
+  serverInfo: { name: 'left-server', version: '1.0.0' },
+  clientInfo: { name: 'left-client', version: '1.0.0' },
+});
 
-Use `ctx.client` to call tools exposed by the peer on the same WebSocket session.
+const right = new BidirectionalSession({
+  serverInfo: { name: 'right-server', version: '1.0.0' },
+  clientInfo: { name: 'right-client', version: '1.0.0' },
+});
 
-### Compatibility With Normal MCP ws Client
+const [leftTransport, rightTransport] = InMemoryTransport.createLinkedPair();
+const leftConn = await left.connect(leftTransport);
+const rightConn = await right.accept(rightTransport);
+```
 
-`handler()` is compatible with a plain `McpClient.connectWs(...)` client:
+### Backward Compatibility
 
-- normal forward calls are supported
-- reverse calls are not available unless reverse channel is enabled for that connection
+Plain MCP clients are supported:
 
-### Low-level APIs
+- Forward calls work as normal
+- Reverse calls are blocked if peer does not advertise reverse capability
+- Mixed plain and bidirectional clients can coexist on the same server
 
-- raw server instance: `session.server`
-- route handler: `session.handler()`
+### Transport Contract
+
+Custom transport should implement SDK `Transport` behavior:
+
+- `start()`
+- `send(message, options?)`
+- `close()`
+- `onmessage(message, extra?)`
+- `onerror(error)`
+- `onclose()`
 
 ## Notifications
 
-Notification flow is supported both on normal MCP transports and on `BidirectionalSession`.
-
-Current test coverage includes:
-
-- base WebSocket MCP notification delivery
-- internal notification routing in `BidirectionalSession`
-- peer-to-peer notification forwarding across a shared bidirectional session
+Notification flow works on both normal MCP transports and `BidirectionalSession`.
 
 ## Testing
 
@@ -389,4 +419,3 @@ fibjs --test test/integration_test.ts
 fibjs --test test/edge_cases_test.ts
 fibjs --test test/bidirectional_provider_test.ts
 ```
-

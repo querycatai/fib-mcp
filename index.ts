@@ -49,9 +49,9 @@ export type { HttpServerTransportOptions }                   from './src/http';
 
 export { BidirectionalSession }                              from './src/bidirectional_session';
 export type {
-	BidirectionalWebSocket,
+	BidirectionalMessageTransport,
 	BidirectionalSessionOptions,
-	BidirectionalSessionOpenOptions,
+	BidirectionalConnectWsOptions,
 	BidirectionalToolExtra,
 	BidirectionalToolContext,
 	BidirectionalToolCallback,

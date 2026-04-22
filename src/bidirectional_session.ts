@@ -2,10 +2,16 @@ import { Transport, createSessionId } from './base';
 import type { JSONRPCMessage, TransportSendOptions } from './base';
 import { McpClient } from './client';
 import { McpServer } from './server';
+import { WebSocketClientTransport, WebSocketServerTransport } from './ws';
+import type { WebSocketClientOptions } from './ws';
+import { StdioClientTransport as SdkStdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import type { AnySchema, SchemaOutput, ShapeOutput, ZodRawShapeCompat } from '@modelcontextprotocol/sdk/server/zod-compat.js';
 import type { RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/protocol.js';
+import type { Transport as SdkTransport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { CallToolResult, ServerNotification, ServerRequest, ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
+import type { StdioServerParameters } from '@modelcontextprotocol/sdk/client/stdio.js';
 
 declare const WebSocket: any;
 
@@ -43,22 +49,6 @@ function toError(error: any): Error {
     return error instanceof Error ? error : new Error(String(error));
 }
 
-function decodeWebSocketMessage(message: any): JSONRPCMessage {
-    if (message && typeof message.json === 'function') {
-        return message.json();
-    }
-
-    if (message && typeof message.data === 'string') {
-        return JSON.parse(message.data);
-    }
-
-    if (typeof message === 'string') {
-        return JSON.parse(message);
-    }
-
-    return message as JSONRPCMessage;
-}
-
 function supportsReverseService(capabilities: any): boolean {
     return capabilities?.extensions?.[REVERSE_EXTENSION_NAMESPACE]?.reverseService === true;
 }
@@ -83,25 +73,16 @@ function withReverseServiceCapability(options: any, enabled: boolean): any {
     return nextOptions;
 }
 
-export interface BidirectionalWebSocket {
-    onopen?: (() => void) | null;
-    onmessage?: ((message: any) => void) | null;
-    onerror?: ((error: any) => void) | null;
-    onclose?: (() => void) | null;
-    send(data: string): void | Promise<void>;
-    close(): void | Promise<void>;
-}
+export type BidirectionalMessageTransport = SdkTransport;
 
 export interface BidirectionalSessionOptions {
+    serverInfo: ClientInfo;
     clientInfo?: ClientInfo;
     clientOptions?: any;
     serverOptions?: any;
-    serverInfo?: ClientInfo;
 }
 
-export interface BidirectionalSessionOpenOptions {
-    protocols?: string | string[];
-}
+export type BidirectionalConnectWsOptions = WebSocketClientOptions;
 
 export type BidirectionalToolExtra = RequestHandlerExtra<ServerRequest, ServerNotification>;
 
@@ -352,7 +333,7 @@ class ConnectionBridge implements BidirectionalConnection {
     readonly client: McpClient;
 
     private readonly _manager: BidirectionalSession;
-    private readonly _ws: BidirectionalWebSocket;
+    private readonly _transport: BidirectionalMessageTransport;
     private readonly _clientTransport: ConnectionClientTransport;
     private readonly _eagerClientConnect: boolean;
     private readonly _serverContextClient: McpClient;
@@ -363,13 +344,13 @@ class ConnectionBridge implements BidirectionalConnection {
 
     constructor(
         manager: BidirectionalSession,
-        ws: BidirectionalWebSocket,
+        transport: BidirectionalMessageTransport,
         client: McpClient,
         forceInitialize: boolean,
         eagerClientConnect: boolean,
     ) {
         this._manager = manager;
-        this._ws = ws;
+        this._transport = transport;
         this.client = client;
         this.sessionId = createSessionId();
         this._clientTransport = new ConnectionClientTransport(this, forceInitialize);
@@ -380,15 +361,15 @@ class ConnectionBridge implements BidirectionalConnection {
     async start(): Promise<void> {
         this._manager._registerConnection(this);
 
-        this._ws.onmessage = (message) => {
-            this._handleInboundMessage(decodeWebSocketMessage(message)).catch((error: any) => {
+        this._transport.onmessage = (message) => {
+            this._handleInboundMessage(message).catch((error: any) => {
                 this._clientTransport.fail(toError(error));
             });
         };
-        this._ws.onerror = (error) => {
+        this._transport.onerror = (error) => {
             this._clientTransport.fail(toError(error));
         };
-        this._ws.onclose = () => {
+        this._transport.onclose = () => {
             this._closed = true;
             this._manager._unregisterConnection(this.sessionId);
             this._clientTransport.shutdown();
@@ -406,7 +387,7 @@ class ConnectionBridge implements BidirectionalConnection {
         this._manager._unregisterConnection(this.sessionId);
         this._clientTransport.shutdown();
         try { await this.client.close(); } catch (_) {}
-        await this._ws.close();
+        await this._transport.close();
     }
 
     isReverseEnabled(): boolean {
@@ -438,7 +419,7 @@ class ConnectionBridge implements BidirectionalConnection {
             this._pendingOwners.set(toRequestKey((message as any).id), owner);
         }
 
-        await this._ws.send(JSON.stringify(message));
+        await this._transport.send(message);
     }
 
     private async _ensureClientConnected(): Promise<void> {
@@ -529,23 +510,20 @@ export class BidirectionalSession {
     private readonly _reverseEnabledSessions: Set<string> = new Set();
     private readonly _clientInfo: ClientInfo;
     private readonly _clientOptions: any;
-    private readonly _serverInfo?: ClientInfo;
     private _connected = false;
 
-    constructor(info: ClientInfo, options: BidirectionalSessionOptions = {}) {
-        const reverseOptIn = !!options.serverInfo;
-        if (!reverseOptIn && supportsReverseService(options.clientOptions?.capabilities)) {
-            throw new Error('BidirectionalSession reverse service declaration requires serverInfo');
+    constructor(options: BidirectionalSessionOptions) {
+        if (!options || !options.serverInfo) {
+            throw new Error('BidirectionalSession requires serverInfo');
         }
 
-        this.server = new McpServer(info, withReverseServiceCapability(options.serverOptions, reverseOptIn));
+        this.server = new McpServer(options.serverInfo, withReverseServiceCapability(options.serverOptions, true));
         this._serverTransport = new SharedServerTransport(
             (sessionId) => this._isReverseEnabled(sessionId),
             (sessionId) => this._onPeerReverseSupported(sessionId),
         );
         this._clientInfo = options.clientInfo || { name: 'bidirectional-client', version: '1.0.0' };
-        this._clientOptions = withReverseServiceCapability(options.clientOptions, reverseOptIn);
-        this._serverInfo = options.serverInfo;
+        this._clientOptions = withReverseServiceCapability(options.clientOptions, true);
     }
 
     tool(name: string, cb: BidirectionalToolCallback): RegisteredTool;
@@ -563,54 +541,53 @@ export class BidirectionalSession {
         return this.server.tool(...args.slice(0, -1), this._wrapToolHandler(userHandler));
     }
 
-    handler(): any {
+    wsHandler(): any {
         const self = this;
-        return WebSocket.upgrade(function (ws: any) {
-            self._connect(ws, false).catch(function (error: any) {
+        const wst = new WebSocketServerTransport();
+        return wst.handler(function (conn: WebSocketServerTransport) {
+            self._connect(conn, false).catch(function (error: any) {
                 const normalized = toError(error);
                 try {
-                    if (typeof ws.onerror === 'function') {
-                        ws.onerror(normalized);
+                    if (conn.onerror) {
+                        conn.onerror(normalized);
                     }
                 } catch (_) {}
                 try {
-                    ws.close();
+                    conn.close();
                 } catch (_) {}
             });
         });
     }
 
-    async open(url: string, options: BidirectionalSessionOpenOptions = {}): Promise<BidirectionalConnection> {
-        return new Promise<BidirectionalConnection>((resolve, reject) => {
-            const ws = new WebSocket(url, options.protocols || '');
-            let settled = false;
-
-            ws.onopen = async () => {
-                if (settled) return;
-                settled = true;
-
-                try {
-                    const connection = await this._connect(ws, true);
-                    resolve(connection);
-                } catch (error: any) {
-                    try { ws.close(); } catch (_) {}
-                    reject(toError(error));
-                }
-            };
-
-            ws.onerror = (error: any) => {
-                if (settled) return;
-                settled = true;
-                reject(toError(error));
-            };
-        });
+    async connectWs(url: string, options: BidirectionalConnectWsOptions = {}): Promise<BidirectionalConnection> {
+        const transport = new WebSocketClientTransport(url, options);
+        return await this._connect(transport, true);
     }
 
-    private async _connect(ws: BidirectionalWebSocket, eagerClientConnect: boolean): Promise<BidirectionalConnection> {
+    async connectStdio(command: string, args: string[] = [], options: Omit<StdioServerParameters, 'command' | 'args'> = {}): Promise<BidirectionalConnection> {
+        const transport = new SdkStdioClientTransport({ command, args, ...options });
+        return await this._connect(transport, true);
+    }
+
+    async listenStdio(): Promise<BidirectionalConnection> {
+        const transport = new StdioServerTransport();
+        return await this._connect(transport, false);
+    }
+
+    async connect(transport: BidirectionalMessageTransport): Promise<BidirectionalConnection> {
+        return await this._connect(transport, true);
+    }
+
+    async accept(transport: BidirectionalMessageTransport): Promise<BidirectionalConnection> {
+        return await this._connect(transport, false);
+    }
+
+    private async _connect(transport: BidirectionalMessageTransport, eagerClientConnect: boolean): Promise<BidirectionalConnection> {
         await this._ensureServerConnected();
+        await transport.start();
 
         const client = new McpClient(this._clientInfo, this._clientOptions);
-        const connection = new ConnectionBridge(this, ws, client, this._shouldAttemptReverse(), eagerClientConnect);
+        const connection = new ConnectionBridge(this, transport, client, this._shouldAttemptReverse(), eagerClientConnect);
         await connection.start();
 
         return connection;
@@ -652,7 +629,7 @@ export class BidirectionalSession {
     }
 
     _shouldAttemptReverse(): boolean {
-        return !!this._serverInfo;
+        return true;
     }
 
     _onPeerReverseSupported(sessionId: string): void {
@@ -680,7 +657,7 @@ export class BidirectionalSession {
 
             if (handlerArgs.length === 1) {
                 extra = handlerArgs[0];
-            } else {
+            } else if (handlerArgs.length >= 2) {
                 payload = handlerArgs[0];
                 extra = handlerArgs[1];
             }
@@ -694,9 +671,11 @@ export class BidirectionalSession {
 
             if (handlerArgs.length === 1) {
                 return await userHandler(context);
+            } else if (handlerArgs.length >= 2) {
+                return await userHandler(payload, context);
             }
 
-            return await userHandler(payload, context);
+            return await userHandler();
         };
     }
 
@@ -706,8 +685,14 @@ export class BidirectionalSession {
     }
 
     private _serverContextClientForSession(sessionId?: string): McpClient | null {
-        if (!sessionId) return null;
-        const connection = this._connections.get(String(sessionId));
+        let finalSessionId = sessionId;
+        
+        if (!finalSessionId && this._serverTransport) {
+            finalSessionId = (this._serverTransport as any)._activeSessionId;
+        }
+        
+        if (!finalSessionId) return null;
+        const connection = this._connections.get(String(finalSessionId));
         return connection ? connection.serverContextClient() : null;
     }
 
