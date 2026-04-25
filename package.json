@@ -1,6 +1,6 @@
 {
   "name": "fib-mcp",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "MCP (Model Context Protocol) client/server for fibjs with stdio/http/sse/ws transport",
   "main": "index.ts",
   "type": "module",

@@ -14,9 +14,14 @@ declare const WebSocket: any;
 
 const DEFAULT_WS_PROTOCOL = 'mcp';
 
+export interface WebSocketConnectRequest {
+    headers?: any;
+    [key: string]: unknown;
+}
+
 // ─── WebSocketServerTransport ─────────────────────────────────────────────────
 
-export type ConnectCallback = (transport: WebSocketServerTransport) => void;
+export type ConnectCallback = (transport: WebSocketServerTransport, req?: WebSocketConnectRequest) => void;
 
 /**
  * Server-side WebSocket transport.
@@ -37,11 +42,11 @@ export class WebSocketServerTransport extends Transport {
      */
     handler(onconnect?: ConnectCallback): any {
         const self = this;
-        return WebSocket.upgrade({ protocol: DEFAULT_WS_PROTOCOL }, function (socket: any) {
+        return WebSocket.upgrade({ protocol: DEFAULT_WS_PROTOCOL }, function (socket: any, req?: WebSocketConnectRequest) {
             if (typeof onconnect === 'function') {
                 const t = new WebSocketServerTransport();
                 t._attachSocket(socket);
-                onconnect(t);
+                onconnect(t, req);
             } else {
                 self._attachSocket(socket);
             }
