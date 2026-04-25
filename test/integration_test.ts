@@ -3,6 +3,7 @@ import assert from 'assert';
 import coroutine from 'coroutine';
 import path from 'path';
 import http from 'http';
+import { WebSocketClientTransport as SdkWebSocketClientTransport } from '@modelcontextprotocol/sdk/client/websocket.js';
 import { ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
 
 import { BidirectionalSession, McpServer, McpClient } from '../index';
@@ -266,6 +267,10 @@ describe('fib-mcp integration', () => {
 
             assert.ok(names.includes('ping'));
             assert.ok(names.includes('hello'));
+        });
+
+        it('uses the SDK websocket client transport for ws descriptors', async () => {
+            assert.ok(client.transport instanceof SdkWebSocketClientTransport);
         });
 
         it('can call a tool', async () => {

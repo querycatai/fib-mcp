@@ -43,9 +43,10 @@ export type { JSONRPCMessage, MessageHandler, ErrorHandler, CloseHandler } from 
 // ── Transport implementations (for advanced use) ──────────────────────────────
 export { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 export { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+export { WebSocketClientTransport } from '@modelcontextprotocol/sdk/client/websocket.js';
 
-export { WebSocketServerTransport, WebSocketClientTransport } from './src/ws';
-export type { ConnectCallback, WebSocketClientOptions }      from './src/ws';
+export { WebSocketServerTransport } from './src/ws';
+export type { ConnectCallback }      from './src/ws';
 
 export { SseServerTransport, SseClientTransport }            from './src/sse';
 export type { SseClientOptions }                             from './src/sse';

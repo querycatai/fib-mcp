@@ -4,7 +4,7 @@ MCP (Model Context Protocol) SDK for the fibjs ecosystem.
 
 `McpServer` and `McpClient` extend `@modelcontextprotocol/sdk` directly.
 fib-mcp adds fibjs-native server transports (`sse`, `ws`, `http`),
-fibjs-native client transports for `sse` and `ws`, and handler methods
+a fibjs-native client transport for `sse`, and handler methods
 for mounting server transports into your own `http.Server`.
 
 TypeScript runs directly on fibjs; no compile step is required.
@@ -14,7 +14,7 @@ TypeScript runs directly on fibjs; no compile step is required.
 - `McpServer extends sdk.McpServer` — all SDK methods available as-is
 - `McpClient extends sdk.Client` — all SDK methods available as-is
 - fibjs-native server transports: `sse`, `ws`, `http`
-- fibjs-native client transports: `sse`, `ws`
+- client transports: SDK `ws`, SDK Streamable HTTP, fibjs-native `sse`
 - HTTP client uses the SDK Streamable HTTP transport
 - SSE automatic endpoint discovery (standard MCP SSE protocol)
 - Designed to be mounted into user-managed `http.Server` routes
@@ -227,7 +227,7 @@ Use transport descriptor objects aligned with MCP Registry transport style:
 
 - `{ transport: 'streamable-http', url, options? }`
 - `{ transport: 'sse', url, messageUrl?, options? }`
-- `{ transport: 'ws' | 'websocket', url, options? }`
+- `{ transport: 'ws' | 'websocket', url }`
 - `{ transport: 'stdio', path, options? }`
 - `{ transport: 'stdio', command, args?, options? }`
 
@@ -242,9 +242,6 @@ Options:
 - `headers?`: extra request headers
 - `method?`: POST method override (default: `POST`)
 
-WebSocket options:
-- `protocols?`: WebSocket sub-protocols
-
 ## Transport Notes
 
 | Transport | Client | Server |
@@ -252,7 +249,7 @@ WebSocket options:
 | stdio     | SDK | SDK |
 | http      | SDK Streamable HTTP | fibjs-native |
 | sse       | fibjs-native | fibjs-native |
-| ws        | fibjs-native | fibjs-native |
+| ws        | SDK | fibjs-native |
 
 ## Bidirectional Session
 
@@ -306,7 +303,7 @@ Handler context:
 WebSocket convenience:
 
 - `wsHandler()` for server route mounting
-- `connect({ transport: 'ws', url, options? })` for active side over websocket
+- `connect({ transport: 'ws', url })` for active side over websocket
 
 Stdio convenience:
 

@@ -17,7 +17,7 @@
  *   // Or Streamable HTTP
  *   await client.connect({ transport: 'streamable-http', url: 'http://localhost:3000/mcp' });
  *
- *   // Or WebSocket (fibjs-native)
+ *   // Or WebSocket
  *   await client.connect({ transport: 'ws', url: 'ws://localhost:3000/mcp' });
  *
  *   // Or SSE (fibjs-native) – messageUrl optional, auto-discovered via endpoint event
@@ -28,12 +28,11 @@
  *   const result = await client.callTool({ name: 'add', arguments: { a: 1, b: 2 } });
  */
 
-import { WebSocketClientTransport } from './ws';
-import type { WebSocketClientOptions } from './ws';
 import { SseClientTransport } from './sse';
 import type { SseClientOptions } from './sse';
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { WebSocketClientTransport as SdkWebSocketClientTransport } from '@modelcontextprotocol/sdk/client/websocket.js';
 import { StdioClientTransport as SdkStdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { StdioServerParameters } from '@modelcontextprotocol/sdk/client/stdio.js';
@@ -51,7 +50,6 @@ export interface McpClientHttpConnectOptions {
 export interface McpClientWsConnectOptions {
     transport: 'ws' | 'websocket';
     url: string;
-    options?: WebSocketClientOptions;
 }
 
 export interface McpClientSseConnectOptions {
@@ -81,7 +79,7 @@ function createClientTransportFromConfig(config: McpClientConnectOptions): any {
     }
 
     if (config.transport === 'ws' || config.transport === 'websocket') {
-        return new WebSocketClientTransport(config.url, config.options);
+        return new SdkWebSocketClientTransport(config.url);
     }
 
     if (config.transport === 'sse') {

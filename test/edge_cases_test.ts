@@ -280,5 +280,27 @@ describe('fib-mcp edge cases', () => {
 
       assert.equal(gotError, true);
     });
+
+    it('accepts the default MCP websocket subprotocol', async () => {
+      let opened = false;
+
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/mcp`, 'mcp');
+      trackCleanup(() => {
+        try { ws.close(); } catch (_) {}
+      });
+
+      await new Promise<void>((resolve, reject) => {
+        ws.onopen = function () {
+          opened = true;
+          resolve();
+        };
+
+        ws.onerror = function (err: any) {
+          reject(err instanceof Error ? err : new Error(String(err)));
+        };
+      });
+
+      assert.equal(opened, true);
+    });
   });
 });

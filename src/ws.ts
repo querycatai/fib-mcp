@@ -1,20 +1,18 @@
 /**
- * fib-mcp: WebSocket transport
+ * fib-mcp: WebSocket server transport
  *
  * WebSocketServerTransport – pluggable HTTP route handler (no standalone server).
  *   Usage:
  *     const routes = { '/mcp': new WebSocketServerTransport().handler() };
  *
- * WebSocketClientTransport – connects to a WebSocket server URL.
- *   Usage:
- *     const t = new WebSocketClientTransport('ws://host:port/mcp');
- *     await t.start();
  */
 
 import { Transport } from './base';
 import type { JSONRPCMessage } from './base';
 
 declare const WebSocket: any;
+
+const DEFAULT_WS_PROTOCOL = 'mcp';
 
 // ─── WebSocketServerTransport ─────────────────────────────────────────────────
 
@@ -39,7 +37,7 @@ export class WebSocketServerTransport extends Transport {
      */
     handler(onconnect?: ConnectCallback): any {
         const self = this;
-        return WebSocket.upgrade(function (socket: any) {
+        return WebSocket.upgrade({ protocol: DEFAULT_WS_PROTOCOL }, function (socket: any) {
             if (typeof onconnect === 'function') {
                 const t = new WebSocketServerTransport();
                 t._attachSocket(socket);
@@ -94,71 +92,4 @@ export class WebSocketServerTransport extends Transport {
     }
 }
 
-// ─── WebSocketClientTransport ─────────────────────────────────────────────────
 
-export interface WebSocketClientOptions {
-    protocols?: string | string[];
-}
-
-/**
- * Client-side WebSocket transport. Connects to a WebSocket server URL.
- */
-export class WebSocketClientTransport extends Transport {
-    private _url: string;
-    private _options: WebSocketClientOptions;
-    private _socket: any = null;
-
-    constructor(url: string, options: WebSocketClientOptions = {}) {
-        super();
-        this._url     = url;
-        this._options = options;
-    }
-
-    async start(): Promise<void> {
-        const self = this;
-        return new Promise<void>(function (resolve, reject) {
-            const protocols = self._options.protocols || '';
-            const ws = new WebSocket(self._url, protocols);
-
-            ws.onopen = function () { resolve(); };
-
-            ws.onerror = function (err: any) {
-                const e = err instanceof Error ? err : new Error('ws connect error');
-                reject(e);
-                self._error(e);
-            };
-
-            ws.onmessage = function (evt: any) {
-                try {
-                    self._receive(evt.json());
-                } catch (e: any) {
-                    self._error(new Error('ws: JSON parse error: ' + e.message));
-                }
-            };
-
-            ws.onclose = function () {
-                self._socket = null;
-                self._closed();
-            };
-
-            self._socket = ws;
-        });
-    }
-
-    async send(message: JSONRPCMessage): Promise<void> {
-        if (!this._socket) throw new Error('WebSocketClientTransport: not connected');
-        this._socket.send(JSON.stringify(message));
-    }
-
-    async close(): Promise<void> {
-        if (this._socket) {
-            try { this._socket.close(); } catch (_) {}
-            this._socket = null;
-        }
-        this._closed();
-    }
-
-    get connected(): boolean {
-        return this._socket !== null && this._socket.readyState === WebSocket.OPEN;
-    }
-}
