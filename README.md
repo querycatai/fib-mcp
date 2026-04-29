@@ -322,6 +322,47 @@ Both return `BidirectionalConnection`:
 - `connection.sessionId`
 - `connection.close()`
 
+## Forwarding Gateway
+
+`ForwardingGateway` is a browser/app/agent gateway built on top of the same internal relay and reverse-endpoint split:
+
+- `client/browser -> app`: normal MCP over WebSocket
+- `app -> agent`: raw JSON-RPC request / notification relay over one bidirectional session
+- `agent -> app`: reverse MCP handled locally by app tools through `ReverseMcpEndpoint`
+
+Current default behavior:
+
+- browser-side `initialize` is terminated locally by the app
+- browser -> agent requests are forwarded as raw JSON-RPC requests
+- browser -> agent notifications are forwarded as raw JSON-RPC notifications
+- agent -> browser notifications are forwarded by the gateway default path
+- agent -> app reverse MCP calls use app-local tools via `ctx.client`
+
+This means the forwarding mode does not model the websocket leg as a high-level MCP client facade by default; it treats the forward plane as a relay and the reverse plane as a local MCP endpoint.
+
+Minimal shape:
+
+```ts
+import http from 'http';
+import { ForwardingGateway } from 'fib-mcp';
+
+const gateway = new ForwardingGateway({
+  appInfo: { name: 'app-gateway', version: '1.0.0' },
+  connectAgent: async () => ({ transport: 'ws', url: 'ws://127.0.0.1:9001/mcp' }),
+});
+
+gateway.tool('app.greet', {}, async () => ({
+  content: [{ type: 'text', text: 'hello-from-app' }],
+}));
+
+const svr = new http.Server(3000, {
+  '/mcp': gateway.wsHandler(),
+});
+svr.start();
+```
+
+Use `onForwardRequest`, `onForwardNotification`, and `onAgentNotification` when the app needs gateway-specific policy rather than the default raw relay behavior.
+
 ### WebSocket Example
 
 ```ts

@@ -16,6 +16,26 @@ function trackCleanup(fn: CleanupFn): void {
   cleanupStack.push(fn);
 }
 
+async function withDedicatedHttpServer<T>(
+  port: number,
+  configure: (server: any) => void,
+  run: () => Promise<T>,
+  timeoutMs = 500,
+): Promise<T> {
+  const server = new McpServer({ name: `http-temp-${port}`, version: '1.0.0' });
+  const httpServer = new http.Server(port, { '/mcp': server.httpHandler({ timeoutMs }) });
+
+  try {
+    configure(server);
+    httpServer.start();
+    coroutine.sleep(50);
+    return await run();
+  } finally {
+    try { await server.close(); } catch (_) {}
+    try { httpServer.stop(); } catch (_) {}
+  }
+}
+
 async function runCleanupStack(): Promise<void> {
   while (cleanupStack.length > 0) {
     const fn = cleanupStack.pop();
@@ -69,7 +89,7 @@ describe('fib-mcp edge cases', () => {
         return { content: [{ type: 'text', text: 'never' }] };
       });
 
-      httpServer = new http.Server(port, { '/mcp': server.httpHandler({ timeoutMs: 200 }) });
+      httpServer = new http.Server(port, { '/mcp': server.httpHandler({ timeoutMs: 500 }) });
       httpServer.start();
       trackCleanup(() => {
         if (!httpServer) return;
@@ -117,45 +137,49 @@ describe('fib-mcp edge cases', () => {
       });
 
       const elapsed = Date.now() - started;
-      assert.ok(elapsed >= 150, `expected >=150ms, got ${elapsed}ms`);
+      assert.ok(elapsed >= 400, `expected >=400ms, got ${elapsed}ms`);
       assert.equal(resp.status, 504);
       const data = await resp.json();
       assert.equal(data.error, 'mcp response timeout');
     });
 
     it('returns JSON array for batch requests', async () => {
-      const resp = await fetch(`http://127.0.0.1:${port}/mcp`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify([
-          { jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} },
-          { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} },
-        ]),
-      });
+      await withDedicatedHttpServer(port + 20, () => {}, async () => {
+        const resp = await fetch(`http://127.0.0.1:${port + 20}/mcp`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify([
+            { jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} },
+            { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} },
+          ]),
+        });
 
-      assert.equal(resp.status, 200);
-      const data = await resp.json();
-      assert.ok(Array.isArray(data));
-      assert.equal(data.length, 2);
-      assert.equal(data[0].id, 1);
-      assert.equal(data[1].id, 2);
+        assert.equal(resp.status, 200);
+        const data = await resp.json();
+        assert.ok(Array.isArray(data));
+        assert.equal(data.length, 2);
+        assert.equal(data[0].id, 1);
+        assert.equal(data[1].id, 2);
+      });
     });
 
     it('supports mixed batch with request and notification', async () => {
-      const resp = await fetch(`http://127.0.0.1:${port}/mcp`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify([
-          { jsonrpc: '2.0', id: 11, method: 'tools/list', params: {} },
-          { jsonrpc: '2.0', method: 'notifications/initialized', params: {} },
-        ]),
-      });
+      await withDedicatedHttpServer(port + 21, () => {}, async () => {
+        const resp = await fetch(`http://127.0.0.1:${port + 21}/mcp`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify([
+            { jsonrpc: '2.0', id: 11, method: 'tools/list', params: {} },
+            { jsonrpc: '2.0', method: 'notifications/initialized', params: {} },
+          ]),
+        });
 
-      assert.equal(resp.status, 200);
-      const data = await resp.json();
-      assert.ok(Array.isArray(data));
-      assert.equal(data.length, 1);
-      assert.equal(data[0].id, 11);
+        assert.equal(resp.status, 200);
+        const data = await resp.json();
+        assert.ok(Array.isArray(data));
+        assert.equal(data.length, 1);
+        assert.equal(data[0].id, 11);
+      });
     });
 
     it('can recover after timeout and handle next request', async () => {

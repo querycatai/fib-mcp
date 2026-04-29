@@ -66,3 +66,12 @@ export type {
 	BidirectionalToolCallback,
 	BidirectionalConnection,
 } from './src/bidirectional_session';
+
+export { ForwardingGateway }                                 from './src/forwarding_gateway';
+export type {
+	ForwardingGatewayOptions,
+	ForwardingGatewaySession,
+	ForwardingGatewayRequestContext,
+	ForwardingGatewayNotificationContext,
+	ForwardingGatewayConnectAgentContext,
+} from './src/forwarding_gateway';
