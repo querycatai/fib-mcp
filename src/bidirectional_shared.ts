@@ -1,7 +1,7 @@
 import { createSessionId } from './base';
 import { McpClient } from './client';
-import { WebSocketClientTransport as SdkWebSocketClientTransport } from '@modelcontextprotocol/sdk/client/websocket.js';
 import { StdioClientTransport as SdkStdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { createWsClientTransport } from './ws_client';
 import type { AnySchema, SchemaOutput, ShapeOutput, ZodRawShapeCompat } from '@modelcontextprotocol/sdk/server/zod-compat.js';
 import type { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/protocol.js';
 import type { Transport as SdkTransport } from '@modelcontextprotocol/sdk/shared/transport.js';
@@ -82,6 +82,8 @@ export interface BidirectionalSessionOptions {
 export interface BidirectionalWsConnectOptions {
     transport: 'ws' | 'websocket';
     url: string;
+    headers?: Record<string, string>;
+    protocol?: string;
 }
 
 export interface BidirectionalStdioConnectOptions {
@@ -96,7 +98,10 @@ export type BidirectionalConnectOptions = BidirectionalWsConnectOptions | Bidire
 
 export function createBidirectionalClientTransportFromConfig(config: BidirectionalConnectOptions): BidirectionalMessageTransport {
     if (config.transport === 'ws' || config.transport === 'websocket') {
-        return new SdkWebSocketClientTransport(config.url);
+        return createWsClientTransport(config.url, {
+            headers: config.headers,
+            protocol: config.protocol,
+        }) as any;
     }
 
     const command = config.command || process.execPath;

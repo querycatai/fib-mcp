@@ -6,6 +6,7 @@ import http from 'http';
 import { McpServer } from '../index';
 import { createSessionId } from '../src/base';
 import { WebSocketServerTransport } from '../src/ws';
+import { FibWebSocketClientTransport } from '../src/ws_client';
 
 const basePort = coroutine.vmid * 10000;
 
@@ -325,6 +326,83 @@ describe('fib-mcp edge cases', () => {
       });
 
       assert.equal(opened, true);
+    });
+
+    it('client transport throws when start is called twice', async () => {
+      const clientTransport = new FibWebSocketClientTransport(`ws://127.0.0.1:${port}/mcp`);
+      trackCleanup(async () => {
+        try { await clientTransport.close(); } catch (_) {}
+      });
+
+      await clientTransport.start();
+
+      let gotError = false;
+      try {
+        await clientTransport.start();
+      } catch (error: any) {
+        gotError = true;
+        assert.ok(String(error?.message || '').includes('already started'));
+      }
+
+      assert.equal(gotError, true);
+    });
+
+    it('client transport emits onerror and rejects when ws connect fails', async () => {
+      const deadPort = basePort + 4999;
+      const clientTransport = new FibWebSocketClientTransport(`ws://127.0.0.1:${deadPort}/mcp`);
+
+      let gotOnError = false;
+      clientTransport.onerror = () => {
+        gotOnError = true;
+      };
+
+      let rejected = false;
+      try {
+        await clientTransport.start();
+      } catch {
+        rejected = true;
+      }
+
+      assert.equal(rejected, true);
+      assert.equal(gotOnError, true);
+    });
+
+    it('client transport reports schema errors for non-JSON-RPC payloads', async () => {
+      const invalidPort = basePort + 3914;
+      const invalidServer = new http.Server(invalidPort, {
+        '/mcp': WebSocket.upgrade({ protocol: 'mcp' }, (socket: any) => {
+          socket.send(JSON.stringify({ foo: 'bar' }));
+        }),
+      });
+      invalidServer.start();
+      trackCleanup(() => {
+        try { invalidServer.stop(); } catch (_) {}
+      });
+
+      coroutine.sleep(50);
+
+      const clientTransport = new FibWebSocketClientTransport(`ws://127.0.0.1:${invalidPort}/mcp`);
+      trackCleanup(async () => {
+        try { await clientTransport.close(); } catch (_) {}
+      });
+
+      let gotSchemaError = false;
+      let gotMessage = false;
+      clientTransport.onmessage = () => {
+        gotMessage = true;
+      };
+      clientTransport.onerror = (error: any) => {
+        const text = String(error?.message || error || '');
+        if (/Invalid input|jsonrpc/i.test(text)) {
+          gotSchemaError = true;
+        }
+      };
+
+      await clientTransport.start();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      assert.equal(gotMessage, false);
+      assert.equal(gotSchemaError, true);
     });
   });
 });

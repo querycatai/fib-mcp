@@ -30,9 +30,9 @@
 
 import { SseClientTransport } from './sse';
 import type { SseClientOptions } from './sse';
+import { createWsClientTransport } from './ws_client';
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { WebSocketClientTransport as SdkWebSocketClientTransport } from '@modelcontextprotocol/sdk/client/websocket.js';
 import { StdioClientTransport as SdkStdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { StdioServerParameters } from '@modelcontextprotocol/sdk/client/stdio.js';
@@ -50,6 +50,8 @@ export interface McpClientHttpConnectOptions {
 export interface McpClientWsConnectOptions {
     transport: 'ws' | 'websocket';
     url: string;
+    headers?: Record<string, string>;
+    protocol?: string;
 }
 
 export interface McpClientSseConnectOptions {
@@ -79,7 +81,10 @@ function createClientTransportFromConfig(config: McpClientConnectOptions): any {
     }
 
     if (config.transport === 'ws' || config.transport === 'websocket') {
-        return new SdkWebSocketClientTransport(config.url);
+        return createWsClientTransport(config.url, {
+            headers: config.headers,
+            protocol: config.protocol,
+        });
     }
 
     if (config.transport === 'sse') {

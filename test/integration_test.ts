@@ -3,10 +3,11 @@ import assert from 'assert';
 import coroutine from 'coroutine';
 import path from 'path';
 import http from 'http';
-import { WebSocketClientTransport as SdkWebSocketClientTransport } from '@modelcontextprotocol/sdk/client/websocket.js';
 import { ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
 
 import { BidirectionalSession, McpServer, McpClient } from '../index';
+import { WebSocketServerTransport } from '../src/ws';
+import { FibWebSocketClientTransport } from '../src/ws_client';
 
 const basePort = coroutine.vmid * 10000;
 type CleanupFn = () => void | Promise<void>;
@@ -269,8 +270,8 @@ describe('fib-mcp integration', () => {
             assert.ok(names.includes('hello'));
         });
 
-        it('uses the SDK websocket client transport for ws descriptors', async () => {
-            assert.ok(client.transport instanceof SdkWebSocketClientTransport);
+        it('uses fib websocket client transport for ws descriptors', async () => {
+            assert.ok(client.transport instanceof FibWebSocketClientTransport);
         });
 
         it('can call a tool', async () => {
@@ -287,6 +288,94 @@ describe('fib-mcp integration', () => {
 
             await withTimeout(server.sendToolListChanged(), 3000, 'ws sendToolListChanged');
             await withTimeout(notified, 3000, 'ws receive tool list changed notification');
+        });
+    });
+
+    describe('WebSocket transport headers', () => {
+        const port = basePort + 3913;
+        let server: any = null;
+        let httpServer: any = null;
+        let client: any = null;
+        let capturedCookie = '';
+        let capturedApiKey = '';
+
+        const readHeader = (headers: any, name: string): string => {
+            if (!headers) return '';
+            if (headers.get && typeof headers.get === 'function') {
+                return String(headers.get(name) || '').trim();
+            }
+            if (headers.firstHeader && typeof headers.firstHeader === 'function') {
+                return String(headers.firstHeader(name) || '').trim();
+            }
+            return String(headers[name] ?? headers[name.toLowerCase()] ?? headers[name.toUpperCase()] ?? '').trim();
+        };
+
+        before(async () => {
+            server = new McpServer({ name: 'ws-header-server', version: '1.0.0' });
+            trackCleanup(async () => {
+                if (!server) return;
+                try { await server.close(); } catch (_) {}
+                server = null;
+            });
+
+            server.tool('ping', {}, async () => ({
+                content: [{ type: 'text', text: 'pong-header' }],
+            }));
+
+            const wst = new WebSocketServerTransport();
+            httpServer = new http.Server(port, {
+                '/mcp': wst.handler((conn, req) => {
+                    const headers = (req as any)?.headers;
+                    capturedCookie = readHeader(headers, 'cookie');
+                    capturedApiKey = readHeader(headers, 'x-api-key');
+                    server.connect(conn).catch((error: any) => {
+                        if (conn.onerror) conn.onerror(error instanceof Error ? error : new Error(String(error)));
+                    });
+                }),
+            });
+
+            httpServer.start();
+            trackCleanup(() => {
+                if (!httpServer) return;
+                try { httpServer.stop(); } catch (_) {}
+                httpServer = null;
+            });
+
+            coroutine.sleep(50);
+
+            client = new McpClient({ name: 'ws-header-client', version: '1.0.0' });
+            trackCleanup(async () => {
+                if (!client) return;
+                try { await client.close(); } catch (_) {}
+                client = null;
+            });
+
+            await withTimeout(
+                client.connect({
+                    transport: 'ws',
+                    url: `ws://127.0.0.1:${port}/mcp`,
+                    headers: {
+                        cookie: 'session=abc123',
+                        'x-api-key': 'ak_ws_header_test',
+                    },
+                }),
+                3000,
+                'ws header connect'
+            );
+        });
+
+        it('uses fib websocket transport when ws headers are provided', async () => {
+            assert.ok(client.transport instanceof FibWebSocketClientTransport);
+        });
+
+        it('forwards ws handshake headers to server', async () => {
+            assert.equal(capturedCookie, 'session=abc123');
+            assert.equal(capturedApiKey, 'ak_ws_header_test');
+        });
+
+        it('can call a tool through ws header transport', async () => {
+            const result = await withTimeout(client.callTool({ name: 'ping', arguments: {} }), 3000, 'ws header callTool ping');
+            assert.equal(extractFirstText(result), 'pong-header');
         });
     });
 
