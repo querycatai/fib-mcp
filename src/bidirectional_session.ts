@@ -1,6 +1,5 @@
 import { ReverseMcpEndpoint } from './reverse_mcp_endpoint';
 import { SessionRelay } from './session_relay';
-import { McpServer } from './server';
 import type { ZodRawShapeCompat } from '@modelcontextprotocol/sdk/server/zod-compat.js';
 import type { RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
@@ -18,7 +17,6 @@ export type {
 } from './bidirectional_shared';
 
 export class BidirectionalSession {
-    readonly server: McpServer;
     private readonly _relay: SessionRelay;
     private readonly _reverseEndpoint: ReverseMcpEndpoint;
 
@@ -40,7 +38,6 @@ export class BidirectionalSession {
         this._relay.setEnsureServerConnected(async (transport) => {
             await this._reverseEndpoint.ensureConnected(transport);
         });
-        this.server = this._reverseEndpoint.server;
     }
 
     tool(name: string, cb: BidirectionalToolCallback): RegisteredTool;
@@ -50,7 +47,39 @@ export class BidirectionalSession {
     tool<Args extends ZodRawShapeCompat>(name: string, paramsSchema: Args, annotations: ToolAnnotations, cb: BidirectionalToolCallback<Args>): RegisteredTool;
     tool<Args extends ZodRawShapeCompat>(name: string, description: string, paramsSchema: Args, annotations: ToolAnnotations, cb: BidirectionalToolCallback<Args>): RegisteredTool;
     tool(...args: any[]): RegisteredTool {
-        return this._reverseEndpoint.tool(...args);
+        return (this._reverseEndpoint as any).tool(...args);
+    }
+
+    registerTool(...args: any[]): RegisteredTool {
+        return this._reverseEndpoint.registerTool(...args);
+    }
+
+    registerResource(...args: any[]): any {
+        return this._reverseEndpoint.registerResource(...args);
+    }
+
+    registerPrompt(...args: any[]): any {
+        return this._reverseEndpoint.registerPrompt(...args);
+    }
+
+    resource(...args: any[]): any {
+        return this._reverseEndpoint.resource(...args);
+    }
+
+    prompt(...args: any[]): any {
+        return this._reverseEndpoint.prompt(...args);
+    }
+
+    setRequestHandler(...args: any[]): any {
+        return this._reverseEndpoint.setRequestHandler(...args);
+    }
+
+    setNotificationHandler(...args: any[]): any {
+        return this._reverseEndpoint.setNotificationHandler(...args);
+    }
+
+    registerCapabilities(...args: any[]): any {
+        return this._reverseEndpoint.registerCapabilities(...args);
     }
 
     wsHandler(): any {
@@ -62,10 +91,7 @@ export class BidirectionalSession {
     }
 
     async connect(config: BidirectionalConnectOptions): Promise<BidirectionalConnection>;
-    async connect(transport: BidirectionalMessageTransport): Promise<BidirectionalConnection> {
-        return this._relay.connect(transport);
-    }
-
+    async connect(transport: BidirectionalMessageTransport): Promise<BidirectionalConnection>;
     async connect(target: any): Promise<BidirectionalConnection> {
         return this._relay.connect(target);
     }

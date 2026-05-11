@@ -317,7 +317,7 @@ describe('ForwardingGateway', () => {
             resolveCancelled = resolve;
         });
 
-        agent.server.server.setNotificationHandler(CancelledNotificationSchema as any, async (notification: any) => {
+        agent.setNotificationHandler(CancelledNotificationSchema as any, async (notification: any) => {
             if (resolveCancelled) {
                 resolveCancelled(notification);
                 resolveCancelled = null;
@@ -388,7 +388,7 @@ describe('ForwardingGateway', () => {
             resolveProgress = resolve;
         });
 
-        agent.server.server.setNotificationHandler(ProgressNotificationSchema as any, async (notification: any) => {
+        agent.setNotificationHandler(ProgressNotificationSchema as any, async (notification: any) => {
             if (resolveProgress) {
                 resolveProgress(notification);
                 resolveProgress = null;
@@ -464,7 +464,7 @@ describe('ForwardingGateway', () => {
             method: z.literal('browser/custom-event'),
         });
 
-        agent.server.server.setNotificationHandler(BrowserCustomNotificationSchema, async (notification: any) => {
+        agent.setNotificationHandler(BrowserCustomNotificationSchema, async (notification: any) => {
             if (resolveNotification) {
                 resolveNotification(notification);
                 resolveNotification = null;
@@ -541,7 +541,7 @@ describe('ForwardingGateway', () => {
             echoed: z.string(),
         });
 
-        agent.server.server.setRequestHandler(BrowserCustomRequestSchema, async (request: any) => ({
+        agent.setRequestHandler(BrowserCustomRequestSchema, async (request: any) => ({
             echoed: `agent:${request.params.payload}`,
         }));
 
@@ -831,7 +831,7 @@ describe('ForwardingGateway', () => {
         let browser: McpClient | null = null;
         let resolveCancelled: ((n: any) => void) | null = null;
         const cancelledReceived = new Promise<any>((resolve) => { resolveCancelled = resolve; });
-        agent.server.server.setNotificationHandler(CancelledNotificationSchema as any, async (n: any) => {
+        agent.setNotificationHandler(CancelledNotificationSchema as any, async (n: any) => {
             if (resolveCancelled) { resolveCancelled(n); resolveCancelled = null; }
         });
 
@@ -884,7 +884,7 @@ describe('ForwardingGateway', () => {
         let gatewayHost: any = null;
         let browser: McpClient | null = null;
 
-        agent.server.server.setNotificationHandler(CancelledNotificationSchema as any, async (_n: any) => {
+        agent.setNotificationHandler(CancelledNotificationSchema as any, async (_n: any) => {
             agentReceivedCount++;
         });
 
@@ -1199,7 +1199,7 @@ describe('ForwardingGateway', () => {
             ok: z.boolean(),
         });
 
-        agent.server.server.setRequestHandler(BrowserFailRequestSchema, async (request: any) => {
+        agent.setRequestHandler(BrowserFailRequestSchema, async (request: any) => {
             throw new McpError(-32077, `agent-failure:${request.params?.reason || 'unknown'}`, {
                 source: 'agent',
             });
@@ -1271,7 +1271,7 @@ describe('ForwardingGateway', () => {
         let gatewayHost: any = null;
         let browser: McpClient | null = null;
 
-        agent.server.server.registerCapabilities({
+        agent.registerCapabilities({
             resources: {
                 subscribe: true,
             },

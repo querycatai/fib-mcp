@@ -165,6 +165,20 @@ Extends `@modelcontextprotocol/sdk` `McpServer`. All SDK methods (`tool`, `resou
 
 fib-mcp adds the following fibjs-native transport methods:
 
+#### tool vs registerTool
+
+Both are valid, and both register MCP tools.
+
+- `tool(...)`: high-level helper API; concise and preferred for most examples.
+- `registerTool(...)`: lower-level SDK API; useful when you want explicit control over registration shape (for example, full schema objects and custom handler wiring).
+
+Why the repository has both styles:
+
+- README quick examples use `tool(...)` for readability.
+- Some production paths use `registerTool(...)` because those handlers need the lower-level control surface.
+
+This is expected behavior, not a protocol mismatch.
+
 Note: a single `McpServer` instance should bind only one network transport (`ws`, `sse`, or `http`).
 If you need multiple network protocols, create separate `McpServer` instances.
 
@@ -259,6 +273,7 @@ Options:
 - Reverse calls: peer calls local tools through `ctx.client`
 - Session-scoped capability negotiation for reverse channel
 - Backward compatible with plain MCP clients
+- Hides internal server implementation details from the public API
 
 ### Constructor (New API)
 
@@ -283,6 +298,11 @@ Options:
 - `serverOptions` (optional): forwarded to internal `McpServer`
 
 ### Tool Callback Context
+
+`BidirectionalSession.tool(...)` is the bidirectional wrapper and is the recommended path for reverse-call handlers.
+Internally it delegates to the underlying MCP server tool registration and injects `ctx.client`.
+
+If you need MCP standard registration APIs, call them directly on `BidirectionalSession` (`registerTool`, `registerResource`, `registerPrompt`, etc.).
 
 ```ts
 session.tool('server.proxy', {}, async (_args, ctx) => {

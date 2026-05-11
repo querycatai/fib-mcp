@@ -42,6 +42,38 @@ export class ReverseMcpEndpoint {
         return this.server.tool(...args.slice(0, -1), this._wrapToolHandler(userHandler));
     }
 
+    registerTool(...args: any[]): RegisteredTool {
+        return (this.server as any).registerTool(...args);
+    }
+
+    registerResource(...args: any[]): any {
+        return (this.server as any).registerResource(...args);
+    }
+
+    registerPrompt(...args: any[]): any {
+        return (this.server as any).registerPrompt(...args);
+    }
+
+    resource(...args: any[]): any {
+        return (this.server as any).resource(...args);
+    }
+
+    prompt(...args: any[]): any {
+        return (this.server as any).prompt(...args);
+    }
+
+    setRequestHandler(...args: any[]): any {
+        return (this.server as any).server.setRequestHandler(...args);
+    }
+
+    setNotificationHandler(...args: any[]): any {
+        return (this.server as any).server.setNotificationHandler(...args);
+    }
+
+    registerCapabilities(...args: any[]): any {
+        return (this.server as any).server.registerCapabilities(...args);
+    }
+
     async ensureConnected(transport: SharedServerTransport): Promise<void> {
         if (this._connected) return;
         this._connected = true;

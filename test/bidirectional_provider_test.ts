@@ -265,6 +265,81 @@ describe('BidirectionalSession public APIs', () => {
         );
     });
 
+    it('does not expose raw server and supports registerTool/registerResource APIs', async () => {
+        const port = nextPort();
+        const accepted = createSession('accepted-server', 'accepted-client');
+        const peer = createSession('peer-server', 'peer-client', {
+            serverInfo: { name: 'peer-server', version: '1.0.0' },
+        });
+        let connection: any = null;
+        let host: any = null;
+
+        assert.equal((accepted as any).server, undefined);
+
+        accepted.registerTool('server.ping.via-register', {
+            description: 'ping via registerTool',
+            inputSchema: {},
+        }, async () => ({
+            content: [{ type: 'text', text: 'pong-register' }],
+            structuredContent: { ok: true },
+        }));
+
+        accepted.registerResource(
+            'server.meta',
+            'agent://meta',
+            {
+                title: 'server meta',
+                description: 'meta resource',
+                mimeType: 'application/json',
+            },
+            async () => ({
+                contents: [{
+                    uri: 'agent://meta',
+                    mimeType: 'application/json',
+                    text: JSON.stringify({ version: '1.0.0' }),
+                }],
+            }),
+        );
+
+        try {
+            host = new http.Server(port, {
+                '/mcp': accepted.wsHandler(),
+            });
+            host.start();
+            coroutine.sleep(50);
+
+            connection = await withTimeout(
+                peer.connect({ transport: 'ws', url: `ws://127.0.0.1:${port}/mcp` }),
+                3000,
+                'open with registerTool/registerResource'
+            );
+
+            const toolResult = await withTimeout(
+                connection.client.callTool({ name: 'server.ping.via-register', arguments: {} }),
+                3000,
+                'call registerTool registered tool'
+            );
+            assert.equal(extractFirstText(toolResult), 'pong-register');
+
+            const resourceResult = await withTimeout(
+                connection.client.readResource({ uri: 'agent://meta' }),
+                3000,
+                'read registerResource registered resource'
+            );
+            const text = resourceResult?.contents?.[0]?.text || '';
+            assert.equal(JSON.parse(text).version, '1.0.0');
+        } finally {
+            if (connection) {
+                try { await connection.close(); } catch (_) {}
+            }
+            try { await peer.close(); } catch (_) {}
+            try { await accepted.close(); } catch (_) {}
+            if (host) {
+                try { host.stop(); } catch (_) {}
+            }
+        }
+    });
+
     it('routes each callback to the matching client connection', async () => {
         const port = nextPort();
         const accepted = createSession('accepted-server', 'accepted-client');
@@ -729,6 +804,74 @@ describe('BidirectionalSession public APIs', () => {
             );
 
             assert.equal(extractFirstText(result), 'proxy:echo-from-peer');
+        } finally {
+            if (peerConnection) {
+                try { await peerConnection.close(); } catch (_) {}
+            }
+            if (acceptedConnection) {
+                try { await acceptedConnection.close(); } catch (_) {}
+            }
+            try { await peer.close(); } catch (_) {}
+            try { await accepted.close(); } catch (_) {}
+        }
+    });
+
+    it('keeps accept-side connection.client unavailable for direct outbound calls', async () => {
+        const accepted = createSession('accepted-server', 'accepted-client');
+        const peer = createSession('peer-server', 'peer-client', {
+            serverInfo: { name: 'peer-server', version: '1.0.0' },
+        });
+        let acceptedConnection: any = null;
+        let peerConnection: any = null;
+
+        accepted.tool('server.proxy', {}, async (_args: any, ctx: any) => {
+            const nested = await withTimeout(
+                ctx.client.callTool({ name: 'peer.echo', arguments: {} }),
+                3000,
+                'accepted reverse call via ctx.client'
+            );
+
+            return {
+                content: [{ type: 'text', text: `proxy:${extractFirstText(nested)}` }],
+            };
+        });
+
+        peer.tool('peer.echo', {}, async () => ({
+            content: [{ type: 'text', text: 'echo-from-peer' }],
+        }));
+
+        try {
+            const [acceptedTransport, peerTransport] = createTransportPair();
+
+            acceptedConnection = await withTimeout(
+                accepted.accept(acceptedTransport),
+                3000,
+                'accepted attach transport'
+            );
+
+            await assert.rejects(
+                withTimeout(acceptedConnection.client.listTools(), 1500, 'accepted direct listTools before peer connect'),
+                /not connected/i
+            );
+
+            peerConnection = await withTimeout(
+                peer.connect(peerTransport),
+                3000,
+                'peer attach transport'
+            );
+
+            await assert.rejects(
+                withTimeout(acceptedConnection.client.listTools(), 1500, 'accepted direct listTools after peer connect'),
+                /not connected/i
+            );
+
+            const proxy = await withTimeout(
+                peerConnection.client.callTool({ name: 'server.proxy', arguments: {} }),
+                3000,
+                'accepted reverse call via callback context'
+            );
+
+            assert.equal(extractFirstText(proxy), 'proxy:echo-from-peer');
         } finally {
             if (peerConnection) {
                 try { await peerConnection.close(); } catch (_) {}
