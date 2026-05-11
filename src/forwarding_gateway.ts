@@ -22,50 +22,79 @@ import {
 } from './bidirectional_shared';
 
 export interface ForwardingGatewaySession {
-    readonly browserSessionId: string;
+    readonly clientSessionId: string;
     readonly request?: WebSocketConnectRequest;
     initialized: boolean;
     initializeRequest?: JSONRPCMessage;
     authContext?: any;
-    agentConnection?: BidirectionalConnection;
+    serverConnection?: BidirectionalConnection;
 }
 
-export interface ForwardingGatewayRequestContext {
-    session: ForwardingGatewaySession;
-    message: JSONRPCMessage;
+/**
+ * Context for an incoming JSON-RPC request from the downstream MCP client.
+ *
+ * Call `next()` to forward the request to the upstream server with the original message.
+ * Call `next(modifiedMessage)` to forward a rewritten message instead.
+ * Call `reply(result)` to respond locally without forwarding to the upstream server.
+ * Throw an error to send a JSON-RPC error response; attach a numeric `.code` property
+ * to control the error code (default: -32603).
+ */
+export interface ForwardingGatewayClientRequestContext {
+    readonly session: ForwardingGatewaySession;
+    readonly message: JSONRPCMessage;
+    reply(result: any): Promise<void>;
 }
 
-export interface ForwardingGatewayNotificationContext {
-    session: ForwardingGatewaySession;
-    message: JSONRPCMessage;
+/**
+ * Context for an incoming JSON-RPC notification from the downstream MCP client.
+ *
+ * Call `next()` to forward the notification to the upstream server unchanged.
+ * Call `next(modifiedMessage)` to forward a rewritten notification instead.
+ * Return without calling `next()` to suppress forwarding entirely.
+ */
+export interface ForwardingGatewayClientNotificationContext {
+    readonly session: ForwardingGatewaySession;
+    readonly message: JSONRPCMessage;
 }
 
-export interface ForwardingGatewayAgentNotificationContext {
-    session: ForwardingGatewaySession;
-    message: JSONRPCMessage;
+/**
+ * Context for an incoming JSON-RPC notification from the upstream MCP server.
+ *
+ * Call `next()` to forward the notification to the downstream client unchanged.
+ * Call `next(modifiedMessage)` to forward a rewritten notification instead.
+ * Return without calling `next()` to suppress forwarding entirely.
+ */
+export interface ForwardingGatewayServerNotificationContext {
+    readonly session: ForwardingGatewaySession;
+    readonly message: JSONRPCMessage;
 }
 
-export interface ForwardingGatewayConnectAgentContext {
+export interface ForwardingGatewayConnectServerContext {
     session: ForwardingGatewaySession;
     initializeRequest: JSONRPCMessage;
     authContext: any;
 }
 
+export type ForwardingGatewayClientRequestNext = (message?: JSONRPCMessage) => Promise<void>;
+export type ForwardingGatewayClientNotificationNext = (message?: JSONRPCMessage) => Promise<void>;
+export type ForwardingGatewayServerNotificationNext = (message?: JSONRPCMessage) => Promise<void>;
+
 export interface ForwardingGatewayOptions {
     appInfo: ClientInfo;
-    browserCapabilities?: any;
+    clientCapabilities?: any;
     instructions?: string;
     authenticate?: (context: { request?: WebSocketConnectRequest; initializeRequest: JSONRPCMessage }) => Promise<any> | any;
-    connectAgent?: (context: ForwardingGatewayConnectAgentContext) => Promise<BidirectionalConnectOptions | BidirectionalMessageTransport> | (BidirectionalConnectOptions | BidirectionalMessageTransport);
-    onForwardRequest?: (context: ForwardingGatewayRequestContext) => Promise<any> | any;
-    onForwardNotification?: (context: ForwardingGatewayNotificationContext) => Promise<void> | void;
-    onAgentNotification?: (context: ForwardingGatewayAgentNotificationContext) => Promise<boolean | void> | boolean | void;
-    agentClientInfo?: BidirectionalSessionOptions['clientInfo'];
-    agentClientOptions?: BidirectionalSessionOptions['clientOptions'];
+    connectServer?: (context: ForwardingGatewayConnectServerContext) => Promise<BidirectionalConnectOptions | BidirectionalMessageTransport> | (BidirectionalConnectOptions | BidirectionalMessageTransport);
+    onClientDisconnect?: (session: ForwardingGatewaySession) => Promise<void> | void;
+    onClientRequest?: (context: ForwardingGatewayClientRequestContext, next: ForwardingGatewayClientRequestNext) => Promise<void>;
+    onClientNotification?: (context: ForwardingGatewayClientNotificationContext, next: ForwardingGatewayClientNotificationNext) => Promise<void>;
+    onServerNotification?: (context: ForwardingGatewayServerNotificationContext, next: ForwardingGatewayServerNotificationNext) => Promise<void>;
+    serverClientInfo?: BidirectionalSessionOptions['clientInfo'];
+    serverClientOptions?: BidirectionalSessionOptions['clientOptions'];
     reverseServerOptions?: BidirectionalSessionOptions['serverOptions'];
 }
 
-interface BrowserSessionState extends ForwardingGatewaySession {
+interface ClientSessionState extends ForwardingGatewaySession {
     transport: WebSocketServerTransport;
     closed: boolean;
 }
@@ -96,16 +125,16 @@ export class ForwardingGateway {
     private readonly _options: ForwardingGatewayOptions;
     private readonly _relay: SessionRelay;
     private readonly _reverseEndpoint: ReverseMcpEndpoint;
-    private readonly _sessions: Map<string, BrowserSessionState> = new Map();
+    private readonly _sessions: Map<string, ClientSessionState> = new Map();
 
     constructor(options: ForwardingGatewayOptions) {
         this._options = options;
         this._relay = new SessionRelay({
-            clientInfo: options.agentClientInfo,
-            clientOptions: options.agentClientOptions,
+            clientInfo: options.serverClientInfo,
+            clientOptions: options.serverClientOptions,
             ensureServerConnected: async (_transport) => {},
             onPeerNotification: async ({ sessionId, message }) => {
-                await this._handleAgentNotification(sessionId, message);
+                await this._handleServerNotification(sessionId, message);
             },
         });
         this._reverseEndpoint = new ReverseMcpEndpoint({
@@ -133,7 +162,7 @@ export class ForwardingGateway {
         const self = this;
         const transport = new WebSocketServerTransport();
         return transport.handler(function (conn: WebSocketServerTransport, req?: WebSocketConnectRequest) {
-            self._acceptBrowser(conn, req).catch(async (error: any) => {
+            self._acceptClient(conn, req).catch(async (error: any) => {
                 const normalized = toError(error);
                 try {
                     if (conn.onerror) conn.onerror(normalized);
@@ -146,7 +175,7 @@ export class ForwardingGateway {
     async close(): Promise<void> {
         const sessions = Array.from(this._sessions.values());
         for (const session of sessions) {
-            await this._closeBrowserSession(session);
+            await this._closeClientSession(session);
         }
 
         this._sessions.clear();
@@ -154,34 +183,34 @@ export class ForwardingGateway {
         await this._relay.close();
     }
 
-    private async _acceptBrowser(transport: WebSocketServerTransport, request?: WebSocketConnectRequest): Promise<void> {
-        const browserSessionId = createSessionId();
-        const session: BrowserSessionState = {
-            browserSessionId,
+    private async _acceptClient(transport: WebSocketServerTransport, request?: WebSocketConnectRequest): Promise<void> {
+        const clientSessionId = createSessionId();
+        const session: ClientSessionState = {
+            clientSessionId,
             request,
             transport,
             initialized: false,
             closed: false,
         };
 
-        this._sessions.set(browserSessionId, session);
+        this._sessions.set(clientSessionId, session);
 
         transport.onmessage = (message) => {
-            this._handleBrowserMessage(session, message).catch(async (error: any) => {
+            this._handleClientMessage(session, message).catch(async (error: any) => {
                 if (!session.closed && isRequest(message)) {
                     await transport.send(jsonrpcError((message as any).id, -32603, toError(error).message));
                 }
             });
         };
         transport.onerror = async () => {
-            await this._closeBrowserSession(session);
+            await this._closeClientSession(session);
         };
         transport.onclose = async () => {
-            await this._closeBrowserSession(session);
+            await this._closeClientSession(session);
         };
     }
 
-    private async _handleBrowserMessage(session: BrowserSessionState, message: JSONRPCMessage): Promise<void> {
+    private async _handleClientMessage(session: ClientSessionState, message: JSONRPCMessage): Promise<void> {
         if (isResponse(message)) {
             return;
         }
@@ -197,24 +226,24 @@ export class ForwardingGateway {
 
         if (!session.initialized) {
             if (isRequest(message)) {
-                await session.transport.send(jsonrpcError((message as any).id, -32002, 'browser session is not initialized'));
+                await session.transport.send(jsonrpcError((message as any).id, -32002, 'client session is not initialized'));
             }
             return;
         }
 
         if (isRequest(message)) {
-            await this._handleForwardRequest(session, message);
+            await this._handleClientRequest(session, message);
             return;
         }
 
         if (isNotification(message)) {
-            await this._handleForwardNotification(session, message);
+            await this._handleClientNotification(session, message);
         }
     }
 
-    private async _handleInitialize(session: BrowserSessionState, message: JSONRPCMessage): Promise<void> {
+    private async _handleInitialize(session: ClientSessionState, message: JSONRPCMessage): Promise<void> {
         if (session.initialized) {
-            await session.transport.send(jsonrpcError((message as any).id, -32600, 'browser session is already initialized'));
+            await session.transport.send(jsonrpcError((message as any).id, -32600, 'client session is already initialized'));
             return;
         }
 
@@ -225,13 +254,13 @@ export class ForwardingGateway {
         session.authContext = authContext;
         session.initializeRequest = message;
 
-        if (this._options.connectAgent) {
-            const target = await this._options.connectAgent({
+        if (this._options.connectServer) {
+            const target = await this._options.connectServer({
                 session,
                 initializeRequest: message,
                 authContext,
             });
-            session.agentConnection = await this._relay.connect(target as any);
+            session.serverConnection = await this._relay.connect(target as any);
         }
 
         session.initialized = true;
@@ -239,7 +268,7 @@ export class ForwardingGateway {
         const requestedVersion = (message as any)?.params?.protocolVersion;
         const result: any = {
             protocolVersion: resolveProtocolVersion(requestedVersion),
-            capabilities: this._options.browserCapabilities || {},
+            capabilities: this._options.clientCapabilities || {},
             serverInfo: this._options.appInfo,
         };
 
@@ -250,55 +279,69 @@ export class ForwardingGateway {
         await session.transport.send(jsonrpcResult((message as any).id, result));
     }
 
-    private async _handleForwardRequest(session: BrowserSessionState, message: JSONRPCMessage): Promise<void> {
-        try {
-            if (this._options.onForwardRequest) {
-                const result = await this._options.onForwardRequest({ session, message });
-                await session.transport.send(jsonrpcResult((message as any).id, result));
-                return;
-            }
+    private async _handleClientRequest(session: ClientSessionState, message: JSONRPCMessage): Promise<void> {
+        const defaultNext = async (msg: JSONRPCMessage = message) => {
+            await this._defaultClientRequest(session, msg);
+        };
 
-            await this._handleDefaultForwardRequest(session, message);
+        try {
+            if (this._options.onClientRequest) {
+                const ctx: ForwardingGatewayClientRequestContext = {
+                    session,
+                    message,
+                    reply: async (result) => {
+                        await session.transport.send(jsonrpcResult((message as any).id, result));
+                    },
+                };
+                await this._options.onClientRequest(ctx, defaultNext);
+            } else {
+                await defaultNext();
+            }
         } catch (error: any) {
             const code = typeof error?.code === 'number' ? error.code : -32603;
             await session.transport.send(jsonrpcError((message as any).id, code, toError(error).message));
         }
     }
 
-    private async _handleForwardNotification(session: BrowserSessionState, message: JSONRPCMessage): Promise<void> {
-        if (this._options.onForwardNotification) {
-            await this._options.onForwardNotification({ session, message });
-            return;
-        }
+    private async _handleClientNotification(session: ClientSessionState, message: JSONRPCMessage): Promise<void> {
+        const defaultNext = async (msg: JSONRPCMessage = message) => {
+            await this._defaultClientNotification(session, msg);
+        };
 
-        await this._handleDefaultForwardNotification(session, message);
+        if (this._options.onClientNotification) {
+            const ctx: ForwardingGatewayClientNotificationContext = { session, message };
+            await this._options.onClientNotification(ctx, defaultNext);
+        } else {
+            await defaultNext();
+        }
     }
 
-    private async _handleAgentNotification(agentSessionId: string, message: JSONRPCMessage): Promise<void> {
-        const session = this._findSessionByAgentSessionId(agentSessionId);
+    private async _handleServerNotification(serverSessionId: string, message: JSONRPCMessage): Promise<void> {
+        const session = this._findSessionByServerSessionId(serverSessionId);
         if (!session || session.closed || !session.initialized) {
             return;
         }
 
-        const handled = this._options.onAgentNotification
-            ? await this._options.onAgentNotification({ session, message })
-            : undefined;
+        const defaultNext = async (msg: JSONRPCMessage = message) => {
+            await session.transport.send(msg);
+        };
 
-        if (handled) {
-            return;
+        if (this._options.onServerNotification) {
+            const ctx: ForwardingGatewayServerNotificationContext = { session, message };
+            await this._options.onServerNotification(ctx, defaultNext);
+        } else {
+            await defaultNext();
         }
-
-        await session.transport.send(message);
     }
 
-    private async _handleDefaultForwardRequest(session: BrowserSessionState, message: JSONRPCMessage): Promise<void> {
-        if (!session.agentConnection) {
-            const error: any = new Error('agent connection is not established');
+    private async _defaultClientRequest(session: ClientSessionState, message: JSONRPCMessage): Promise<void> {
+        if (!session.serverConnection) {
+            const error: any = new Error('server connection is not established');
             error.code = -32001;
             throw error;
         }
 
-        const response = await session.agentConnection.request(message as any);
+        const response = await session.serverConnection.request(message as any);
         if (!isResponse(response as any)) {
             const error: any = new Error('forward request did not produce a JSON-RPC response');
             error.code = -32603;
@@ -308,30 +351,34 @@ export class ForwardingGateway {
         await session.transport.send(response as any);
     }
 
-    private async _handleDefaultForwardNotification(session: BrowserSessionState, message: JSONRPCMessage): Promise<void> {
-        if (!session.agentConnection) {
+    private async _defaultClientNotification(session: ClientSessionState, message: JSONRPCMessage): Promise<void> {
+        if (!session.serverConnection) {
             return;
         }
 
-        await session.agentConnection.notify(message as any);
+        await session.serverConnection.notify(message as any);
     }
 
-    private async _closeBrowserSession(session: BrowserSessionState): Promise<void> {
+    private async _closeClientSession(session: ClientSessionState): Promise<void> {
         if (session.closed) return;
         session.closed = true;
-        this._sessions.delete(session.browserSessionId);
+        this._sessions.delete(session.clientSessionId);
 
-        if (session.agentConnection) {
-            try { await session.agentConnection.close(); } catch (_) {}
-            session.agentConnection = undefined;
+        if (session.serverConnection) {
+            try { await session.serverConnection.close(); } catch (_) {}
+            session.serverConnection = undefined;
         }
 
         try { await session.transport.close(); } catch (_) {}
+
+        if (this._options.onClientDisconnect) {
+            try { await this._options.onClientDisconnect(session); } catch (_) {}
+        }
     }
 
-    private _findSessionByAgentSessionId(agentSessionId: string): BrowserSessionState | null {
+    private _findSessionByServerSessionId(serverSessionId: string): ClientSessionState | null {
         for (const session of this._sessions.values()) {
-            if (session.agentConnection?.sessionId === agentSessionId) {
+            if (session.serverConnection?.sessionId === serverSessionId) {
                 return session;
             }
         }

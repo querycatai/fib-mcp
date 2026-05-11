@@ -71,7 +71,11 @@ export { ForwardingGateway }                                 from './src/forward
 export type {
 	ForwardingGatewayOptions,
 	ForwardingGatewaySession,
-	ForwardingGatewayRequestContext,
-	ForwardingGatewayNotificationContext,
-	ForwardingGatewayConnectAgentContext,
+	ForwardingGatewayClientRequestContext,
+	ForwardingGatewayClientRequestNext,
+	ForwardingGatewayClientNotificationContext,
+	ForwardingGatewayClientNotificationNext,
+	ForwardingGatewayServerNotificationContext,
+	ForwardingGatewayServerNotificationNext,
+	ForwardingGatewayConnectServerContext,
 } from './src/forwarding_gateway';

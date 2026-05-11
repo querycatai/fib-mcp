@@ -324,21 +324,19 @@ Both return `BidirectionalConnection`:
 
 ## Forwarding Gateway
 
-`ForwardingGateway` is a browser/app/agent gateway built on top of the same internal relay and reverse-endpoint split:
+`ForwardingGateway` is a client/app/server gateway that proxies MCP over WebSocket:
 
-- `client/browser -> app`: normal MCP over WebSocket
-- `app -> agent`: raw JSON-RPC request / notification relay over one bidirectional session
-- `agent -> app`: reverse MCP handled locally by app tools through `ReverseMcpEndpoint`
+- `client -> gateway`: normal MCP over WebSocket (any MCP client — browser, CLI, etc.)
+- `gateway -> server`: raw JSON-RPC request / notification relay over one bidirectional session
+- `server -> gateway`: reverse MCP handled locally by app tools through `ReverseMcpEndpoint`
 
-Current default behavior:
+Default behavior:
 
-- browser-side `initialize` is terminated locally by the app
-- browser -> agent requests are forwarded as raw JSON-RPC requests
-- browser -> agent notifications are forwarded as raw JSON-RPC notifications
-- agent -> browser notifications are forwarded by the gateway default path
-- agent -> app reverse MCP calls use app-local tools via `ctx.client`
-
-This means the forwarding mode does not model the websocket leg as a high-level MCP client facade by default; it treats the forward plane as a relay and the reverse plane as a local MCP endpoint.
+- client-side `initialize` is terminated locally by the gateway
+- client → server requests are forwarded as raw JSON-RPC requests
+- client → server notifications are forwarded as raw JSON-RPC notifications
+- server → client notifications are forwarded by the gateway default path
+- server → gateway reverse MCP calls use gateway-local tools via `ctx.client`
 
 Minimal shape:
 
@@ -348,7 +346,7 @@ import { ForwardingGateway } from 'fib-mcp';
 
 const gateway = new ForwardingGateway({
   appInfo: { name: 'app-gateway', version: '1.0.0' },
-  connectAgent: async () => ({ transport: 'ws', url: 'ws://127.0.0.1:9001/mcp' }),
+  connectServer: async () => ({ transport: 'ws', url: 'ws://127.0.0.1:9001/mcp' }),
 });
 
 gateway.tool('app.greet', {}, async () => ({
@@ -361,7 +359,153 @@ const svr = new http.Server(3000, {
 svr.start();
 ```
 
-Use `onForwardRequest`, `onForwardNotification`, and `onAgentNotification` when the app needs gateway-specific policy rather than the default raw relay behavior.
+### Hooks — Middleware API
+
+All three hooks use the same `(ctx, next)` middleware signature:
+
+- Call `next()` — execute the default behavior (forward the original message)
+- Call `next(modifiedMessage)` — execute the default behavior with a rewritten message
+- Return without calling `next()` — suppress the default behavior entirely
+- Throw an error — send a JSON-RPC error response (attach a numeric `.code` property)
+
+#### `onClientRequest(ctx, next)`
+
+Intercepts JSON-RPC **requests** arriving from the downstream MCP **client**.
+
+`ctx` fields:
+- `ctx.session` — current session state (includes `serverConnection`, `authContext`, etc.)
+- `ctx.message` — the raw JSON-RPC request message
+- `ctx.reply(result)` — respond locally without forwarding; alternative to `next()`
+
+```ts
+const gateway = new ForwardingGateway({
+  appInfo: { name: 'app-gateway', version: '1.0.0' },
+  connectServer: async () => ({ transport: 'ws', url: 'ws://127.0.0.1:9001/mcp' }),
+  onClientRequest: async (ctx, next) => {
+    // Auth check: only allow certain methods
+    if ((ctx.message as any).method === 'tools/call') {
+      const allowed = checkPermission(ctx.session.authContext);
+      if (!allowed) {
+        const err: any = new Error('forbidden');
+        err.code = -32001;
+        throw err;
+      }
+    }
+    return next(); // continue with default forwarding
+  },
+});
+```
+
+Rewrite a request before forwarding:
+
+```ts
+onClientRequest: async (ctx, next) => {
+  const msg = ctx.message as any;
+  if (msg.method === 'agent.session.open') {
+    return next({
+      ...ctx.message,
+      params: { ...msg.params, agentId: resolveAgentId(ctx.session.authContext) },
+    } as any);
+  }
+  return next();
+},
+```
+
+Respond locally without touching the upstream server:
+
+```ts
+onClientRequest: async (ctx, next) => {
+  if ((ctx.message as any).method === 'local.ping') {
+    return ctx.reply({ pong: true });
+  }
+  return next();
+},
+```
+
+#### `onClientNotification(ctx, next)`
+
+Intercepts JSON-RPC **notifications** arriving from the downstream MCP **client**.
+
+```ts
+onClientNotification: async (ctx, next) => {
+  // log and pass through
+  console.log('client notification:', (ctx.message as any).method);
+  return next();
+},
+```
+
+Suppress forwarding by not calling `next()`:
+
+```ts
+onClientNotification: async (_ctx, _next) => {
+  // drop all client notifications
+},
+```
+
+#### `onServerNotification(ctx, next)`
+
+Intercepts JSON-RPC **notifications** arriving from the upstream MCP **server**.
+
+```ts
+onServerNotification: async (ctx, next) => {
+  // Inject an extra field before forwarding to the client
+  const msg = ctx.message as any;
+  return next({
+    ...ctx.message,
+    params: { ...msg.params, _gatewayId: 'my-app' },
+  } as any);
+},
+```
+
+#### `onClientDisconnect(session)`
+
+Called when a downstream client disconnects. Use for cleanup (e.g. releasing local state keyed on `session.clientSessionId`).
+
+```ts
+onClientDisconnect: (session) => {
+  releaseResources(session.clientSessionId);
+},
+```
+
+### Authentication
+
+Use `authenticate` to validate the connection and attach context:
+
+```ts
+const gateway = new ForwardingGateway({
+  appInfo: { name: 'app-gateway', version: '1.0.0' },
+  authenticate: async ({ request, initializeRequest }) => {
+    const token = request?.headers?.['authorization'];
+    const user = await verifyToken(token);
+    if (!user) throw new Error('unauthorized');
+    return { user };
+  },
+  connectServer: async ({ authContext }) => ({
+    transport: 'ws',
+    url: `ws://127.0.0.1:9001/mcp`,
+    headers: { 'x-user-id': authContext.user.id },
+  }),
+});
+```
+
+The resolved `authContext` is available on `ctx.session.authContext` in all hook callbacks.
+
+### Options Reference
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `appInfo` | `ClientInfo` | Gateway identity (`name`, `version`) |
+| `clientCapabilities` | `object?` | Capabilities advertised to downstream clients |
+| `instructions` | `string?` | Instructions string sent in `initialize` response |
+| `authenticate` | `fn?` | Validate connection; return value becomes `session.authContext` |
+| `connectServer` | `fn?` | Return transport config for the upstream server connection |
+| `onClientRequest` | `fn?` | Middleware for client → server requests |
+| `onClientNotification` | `fn?` | Middleware for client → server notifications |
+| `onServerNotification` | `fn?` | Middleware for server → client notifications |
+| `onClientDisconnect` | `fn?` | Called when a client session ends |
+| `serverClientInfo` | `ClientInfo?` | Identity used for the outbound server connection |
+| `serverClientOptions` | `object?` | Options forwarded to the outbound client |
+| `reverseServerOptions` | `object?` | Options for the local reverse-MCP server endpoint |
 
 ### WebSocket Example
 
