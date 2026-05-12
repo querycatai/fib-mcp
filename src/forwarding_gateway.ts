@@ -120,8 +120,6 @@ function resolveProtocolVersion(requestedVersion?: string): string {
 }
 
 export class ForwardingGateway {
-    readonly server: ReverseMcpEndpoint['server'];
-
     private readonly _options: ForwardingGatewayOptions;
     private readonly _relay: SessionRelay;
     private readonly _reverseEndpoint: ReverseMcpEndpoint;
@@ -145,7 +143,6 @@ export class ForwardingGateway {
         this._relay.setEnsureServerConnected(async (transport) => {
             await this._reverseEndpoint.ensureConnected(transport);
         });
-        this.server = this._reverseEndpoint.server;
     }
 
     tool(name: string, cb: BidirectionalToolCallback): RegisteredTool;

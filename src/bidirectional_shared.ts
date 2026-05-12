@@ -138,7 +138,12 @@ export type BidirectionalToolCallback<Args extends undefined | ZodRawShapeCompat
 
 export interface BidirectionalConnection {
     readonly sessionId: string;
-    readonly client: McpClient;
+    callTool(...args: any[]): Promise<any>;
+    listTools(...args: any[]): Promise<any>;
+    readResource(...args: any[]): Promise<any>;
+    listResources(...args: any[]): Promise<any>;
+    listPrompts(...args: any[]): Promise<any>;
+    getPrompt(...args: any[]): Promise<any>;
     request(message: Record<string, any>): Promise<Record<string, any>>;
     notify(message: Record<string, any>): Promise<void>;
     close(): Promise<void>;

@@ -338,9 +338,16 @@ Generic transport:
 
 Both return `BidirectionalConnection`:
 
-- `connection.client`
 - `connection.sessionId`
+- `connection.callTool(...)`
+- `connection.listTools(...)`
+- `connection.readResource(...)`
+- `connection.listResources(...)`
+- `connection.listPrompts(...)`
+- `connection.getPrompt(...)`
 - `connection.close()`
+
+Note: internal `client`/`server` instances are intentionally hidden from the public API.
 
 ## Forwarding Gateway
 
@@ -553,7 +560,7 @@ const peer = new BidirectionalSession({
 });
 
 const conn = await peer.connect({ transport: 'ws', url: 'ws://127.0.0.1:3000/mcp' });
-const pong = await conn.client.callTool({ name: 'server.ping', arguments: {} });
+const pong = await conn.callTool({ name: 'server.ping', arguments: {} });
 console.log(pong.content[0].text);
 ```
 
@@ -572,7 +579,7 @@ parent.tool('parent.greet', {}, async () => ({
 }));
 
 const conn = await parent.connect({ transport: 'stdio', command: 'fibjs', args: ['./child.ts'] });
-const echo = await conn.client.callTool({ name: 'child.echo', arguments: {} });
+const echo = await conn.callTool({ name: 'child.echo', arguments: {} });
 console.log(echo.content[0].text);
 ```
 

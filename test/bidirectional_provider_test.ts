@@ -91,8 +91,8 @@ describe('BidirectionalSession public APIs', () => {
             );
 
             const [fromAccepted, fromPeer] = await Promise.all([
-                withTimeout(connection.client.callTool({ name: 'server.ping', arguments: {} }), 3000, 'call accepted tool'),
-                withTimeout(connection.client.callTool({ name: 'server.proxy', arguments: {} }), 3000, 'call peer through accepted tool'),
+                withTimeout(connection.callTool({ name: 'server.ping', arguments: {} }), 3000, 'call accepted tool'),
+                withTimeout(connection.callTool({ name: 'server.proxy', arguments: {} }), 3000, 'call peer through accepted tool'),
             ]);
 
             assert.equal(extractFirstText(fromAccepted), 'pong-from-accepted');
@@ -132,7 +132,7 @@ describe('BidirectionalSession public APIs', () => {
             connection = await withTimeout(peer.connect({ transport: 'ws', url: `ws://127.0.0.1:${port}/mcp` }), 3000, 'bidirectional open');
 
             const result = await withTimeout(
-                connection.client.callTool({ name: 'server.has-client', arguments: {} }),
+                connection.callTool({ name: 'server.has-client', arguments: {} }),
                 3000,
                 'call has-client tool'
             );
@@ -185,7 +185,7 @@ describe('BidirectionalSession public APIs', () => {
             connection = await withTimeout(peer.connect({ transport: 'ws', url: `ws://127.0.0.1:${port}/mcp` }), 3000, 'bidirectional open');
 
             const result = await withTimeout(
-                connection.client.callTool({ name: 'server.proxy', arguments: {} }),
+                connection.callTool({ name: 'server.proxy', arguments: {} }),
                 3000,
                 'public reverse call'
             );
@@ -238,7 +238,7 @@ describe('BidirectionalSession public APIs', () => {
             connection = await withTimeout(peer.connect({ transport: 'ws', url: `ws://127.0.0.1:${port}/mcp` }), 3000, 'open with auto reverse negotiation');
 
             const result = await withTimeout(
-                connection.client.callTool({ name: 'server.proxy', arguments: {} }),
+                connection.callTool({ name: 'server.proxy', arguments: {} }),
                 3000,
                 'reverse call via auto negotiation'
             );
@@ -315,14 +315,14 @@ describe('BidirectionalSession public APIs', () => {
             );
 
             const toolResult = await withTimeout(
-                connection.client.callTool({ name: 'server.ping.via-register', arguments: {} }),
+                connection.callTool({ name: 'server.ping.via-register', arguments: {} }),
                 3000,
                 'call registerTool registered tool'
             );
             assert.equal(extractFirstText(toolResult), 'pong-register');
 
             const resourceResult = await withTimeout(
-                connection.client.readResource({ uri: 'agent://meta' }),
+                connection.readResource({ uri: 'agent://meta' }),
                 3000,
                 'read registerResource registered resource'
             );
@@ -386,8 +386,8 @@ describe('BidirectionalSession public APIs', () => {
             ]);
 
             const [resultOne, resultTwo] = await Promise.all([
-                withTimeout(connectionOne.client.callTool({ name: 'server.route-peer', arguments: {} }), 3000, 'route peer one'),
-                withTimeout(connectionTwo.client.callTool({ name: 'server.route-peer', arguments: {} }), 3000, 'route peer two'),
+                withTimeout(connectionOne.callTool({ name: 'server.route-peer', arguments: {} }), 3000, 'route peer one'),
+                withTimeout(connectionTwo.callTool({ name: 'server.route-peer', arguments: {} }), 3000, 'route peer two'),
             ]);
 
             assert.equal(extractFirstText(resultOne), 'peer-one');
@@ -465,7 +465,7 @@ describe('BidirectionalSession public APIs', () => {
                         const results = await Promise.all(
                             Array.from({ length: 20 }, (_, round) => (
                                 withTimeout(
-                                    connection.client.callTool({ name: 'server.roundtrip', arguments: {} }),
+                                    connection.callTool({ name: 'server.roundtrip', arguments: {} }),
                                     5000,
                                     `client ${index} round ${round}`
                                 )
@@ -523,7 +523,7 @@ describe('BidirectionalSession public APIs', () => {
             connection = await withTimeout(peer.connect({ transport: 'ws', url: `ws://127.0.0.1:${port}/mcp` }), 3000, 'bidirectional open');
 
             const result = await withTimeout(
-                connection.client.callTool({ name: 'server.sessionId', arguments: {} }),
+                connection.callTool({ name: 'server.sessionId', arguments: {} }),
                 3000,
                 'call server sessionId tool'
             );
@@ -584,7 +584,7 @@ describe('BidirectionalSession public APIs', () => {
             });
 
             const result = await withTimeout(
-                connection.client.callTool(
+                connection.callTool(
                     { name: 'server.notify', arguments: {} },
                     undefined,
                     {
@@ -798,7 +798,7 @@ describe('BidirectionalSession public APIs', () => {
             );
 
             const result = await withTimeout(
-                peerConnection.client.callTool({ name: 'server.proxy', arguments: {} }),
+                peerConnection.callTool({ name: 'server.proxy', arguments: {} }),
                 3000,
                 'forward call over ndjson transport'
             );
@@ -850,7 +850,7 @@ describe('BidirectionalSession public APIs', () => {
             );
 
             await assert.rejects(
-                withTimeout(acceptedConnection.client.listTools(), 1500, 'accepted direct listTools before peer connect'),
+                withTimeout(acceptedConnection.listTools(), 1500, 'accepted direct listTools before peer connect'),
                 /not connected/i
             );
 
@@ -861,12 +861,12 @@ describe('BidirectionalSession public APIs', () => {
             );
 
             await assert.rejects(
-                withTimeout(acceptedConnection.client.listTools(), 1500, 'accepted direct listTools after peer connect'),
+                withTimeout(acceptedConnection.listTools(), 1500, 'accepted direct listTools after peer connect'),
                 /not connected/i
             );
 
             const proxy = await withTimeout(
-                peerConnection.client.callTool({ name: 'server.proxy', arguments: {} }),
+                peerConnection.callTool({ name: 'server.proxy', arguments: {} }),
                 3000,
                 'accepted reverse call via callback context'
             );
@@ -899,14 +899,14 @@ describe('BidirectionalSession stdio mode', () => {
         let connection: any = null;
         try {
             connection = await withTimeout(
-                parentSession.connect({ transport: 'stdio', command: 'fibjs', args: ['test/fixtures/stdio_bidirectional_child.ts'] }),
+                parentSession.connect({ transport: 'stdio', command: 'fibjs', args: ['packages/fib-mcp/test/fixtures/stdio_bidirectional_child.ts'] }),
                 5000,
                 'parent connect via stdio'
             );
 
             // Call child.echo directly from parent (forward call)
             const childEchoResult = await withTimeout(
-                connection.client.callTool({ name: 'child.echo', arguments: {} }),
+                connection.callTool({ name: 'child.echo', arguments: {} }),
                 3000,
                 'call child echo'
             );
@@ -914,7 +914,7 @@ describe('BidirectionalSession stdio mode', () => {
 
             // Call child.proxy which makes a reverse call to parent.greet
             const reverseProxyResult = await withTimeout(
-                connection.client.callTool({ name: 'child.proxy', arguments: {} }),
+                connection.callTool({ name: 'child.proxy', arguments: {} }),
                 3000,
                 'call child proxy (reverse to parent)'
             );
@@ -932,7 +932,7 @@ describe('BidirectionalSession stdio mode', () => {
 
         try {
             await withTimeout(
-                plainServer.connect({ transport: 'stdio', command: 'fibjs', args: ['test/fixtures/stdio_plain_server.ts'] }),
+                plainServer.connect({ transport: 'stdio', command: 'fibjs', args: ['packages/fib-mcp/test/fixtures/stdio_plain_server.ts'] }),
                 5000,
                 'plain stdio client connect'
             );

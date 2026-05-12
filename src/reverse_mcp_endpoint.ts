@@ -17,13 +17,13 @@ interface ReverseMcpEndpointOptions {
 }
 
 export class ReverseMcpEndpoint {
-    readonly server: McpServer;
+    private readonly _server: McpServer;
 
     private readonly _clientProvider: ReverseSessionClientProvider;
     private _connected = false;
 
     constructor(options: ReverseMcpEndpointOptions) {
-        this.server = new McpServer(options.serverInfo, withReverseServiceCapability(options.serverOptions, true));
+        this._server = new McpServer(options.serverInfo, withReverseServiceCapability(options.serverOptions, true));
         this._clientProvider = options.clientProvider;
     }
 
@@ -39,51 +39,51 @@ export class ReverseMcpEndpoint {
             throw new Error('BidirectionalSession.tool requires a callback');
         }
 
-        return this.server.tool(...args.slice(0, -1), this._wrapToolHandler(userHandler));
+        return this._server.tool(...args.slice(0, -1), this._wrapToolHandler(userHandler));
     }
 
     registerTool(...args: any[]): RegisteredTool {
-        return (this.server as any).registerTool(...args);
+        return (this._server as any).registerTool(...args);
     }
 
     registerResource(...args: any[]): any {
-        return (this.server as any).registerResource(...args);
+        return (this._server as any).registerResource(...args);
     }
 
     registerPrompt(...args: any[]): any {
-        return (this.server as any).registerPrompt(...args);
+        return (this._server as any).registerPrompt(...args);
     }
 
     resource(...args: any[]): any {
-        return (this.server as any).resource(...args);
+        return (this._server as any).resource(...args);
     }
 
     prompt(...args: any[]): any {
-        return (this.server as any).prompt(...args);
+        return (this._server as any).prompt(...args);
     }
 
     setRequestHandler(...args: any[]): any {
-        return (this.server as any).server.setRequestHandler(...args);
+        return (this._server as any).server.setRequestHandler(...args);
     }
 
     setNotificationHandler(...args: any[]): any {
-        return (this.server as any).server.setNotificationHandler(...args);
+        return (this._server as any).server.setNotificationHandler(...args);
     }
 
     registerCapabilities(...args: any[]): any {
-        return (this.server as any).server.registerCapabilities(...args);
+        return (this._server as any).server.registerCapabilities(...args);
     }
 
     async ensureConnected(transport: SharedServerTransport): Promise<void> {
         if (this._connected) return;
         this._connected = true;
-        await this.server.connect(transport);
+        await this._server.connect(transport);
     }
 
     async close(): Promise<void> {
         if (!this._connected) return;
         this._connected = false;
-        try { await this.server.close(); } catch (_) {}
+        try { await this._server.close(); } catch (_) {}
     }
 
     private _wrapToolHandler(userHandler: AnyToolHandler): AnyToolHandler {

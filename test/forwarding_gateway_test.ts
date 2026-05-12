@@ -62,11 +62,11 @@ describe('ForwardingGateway', () => {
                 }
 
                 if ((ctx.message as any).method === 'tools/list') {
-                    return ctx.reply(await ctx.session.serverConnection.client.listTools((ctx.message as any).params));
+                    return ctx.reply(await ctx.session.serverConnection.listTools((ctx.message as any).params));
                 }
 
                 if ((ctx.message as any).method === 'tools/call') {
-                    return ctx.reply(await ctx.session.serverConnection.client.callTool((ctx.message as any).params));
+                    return ctx.reply(await ctx.session.serverConnection.callTool((ctx.message as any).params));
                 }
 
                 const error: any = new Error(`method not supported: ${(ctx.message as any).method}`);

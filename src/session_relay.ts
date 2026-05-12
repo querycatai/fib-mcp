@@ -276,8 +276,34 @@ class BridgeConnection implements BidirectionalConnection {
         this._serverContextClient = this._createServerContextClient();
     }
 
-    get client(): McpClient {
-        return this._getOrCreateClient();
+    async callTool(...args: any[]): Promise<any> {
+        await this._ensurePublicClientReady();
+        return await (this._getOrCreateClient() as any).callTool(...args);
+    }
+
+    async listTools(...args: any[]): Promise<any> {
+        await this._ensurePublicClientReady();
+        return await (this._getOrCreateClient() as any).listTools(...args);
+    }
+
+    async readResource(...args: any[]): Promise<any> {
+        await this._ensurePublicClientReady();
+        return await (this._getOrCreateClient() as any).readResource(...args);
+    }
+
+    async listResources(...args: any[]): Promise<any> {
+        await this._ensurePublicClientReady();
+        return await (this._getOrCreateClient() as any).listResources(...args);
+    }
+
+    async listPrompts(...args: any[]): Promise<any> {
+        await this._ensurePublicClientReady();
+        return await (this._getOrCreateClient() as any).listPrompts(...args);
+    }
+
+    async getPrompt(...args: any[]): Promise<any> {
+        await this._ensurePublicClientReady();
+        return await (this._getOrCreateClient() as any).getPrompt(...args);
     }
 
     async start(): Promise<void> {
@@ -384,7 +410,7 @@ class BridgeConnection implements BidirectionalConnection {
             return;
         }
 
-        this._clientConnectPromise = this.client.connect(this._clientTransport)
+        this._clientConnectPromise = this._getOrCreateClient().connect(this._clientTransport)
             .then(() => {
                 this._clientConnected = true;
             })
@@ -393,6 +419,13 @@ class BridgeConnection implements BidirectionalConnection {
             });
 
         await this._clientConnectPromise;
+    }
+
+    private async _ensurePublicClientReady(): Promise<void> {
+        if (!this._eagerClientConnect) {
+            throw new Error('Not connected');
+        }
+        await this._ensureClientConnected();
     }
 
     private async _ensureReverseClientReady(): Promise<void> {
@@ -407,7 +440,7 @@ class BridgeConnection implements BidirectionalConnection {
         const self = this;
         return new Proxy(Object.create(McpClient.prototype) as McpClient, {
             get(_obj: any, prop: string | symbol, _receiver: any) {
-                const target = self.client as any;
+                const target = self._getOrCreateClient() as any;
                 const value = Reflect.get(target, prop, target);
                 if (typeof value !== 'function') {
                     return value;
