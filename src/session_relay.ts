@@ -1,5 +1,5 @@
 import { Transport } from './base';
-import type { JSONRPCMessage, TransportSendOptions } from './base';
+import type { JSONRPCMessage, MessageExtraInfo, TransportSendOptions } from './base';
 import { McpClient } from './client';
 import { WebSocketServerTransport } from './ws';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -19,12 +19,14 @@ import {
     type ClientInfo,
     type ProviderSide,
 } from './bidirectional_shared';
+import { matchRawNotification, matchRawResponse } from './raw_message';
 
 interface SessionRelayOptions {
     clientInfo?: ClientInfo;
     clientOptions?: any;
     ensureServerConnected: (transport: SharedServerTransport) => Promise<void>;
-    onPeerNotification?: (context: { sessionId: string; message: JSONRPCMessage }) => Promise<void> | void;
+    onPeerNotification?: (context: { sessionId: string; message: JSONRPCMessage; extra?: MessageExtraInfo }) => Promise<void> | void;
+    onRawPeerNotification?: (context: { sessionId: string; rawMessage: string; extra?: MessageExtraInfo }) => boolean | Promise<boolean>;
 }
 
 class ConnectionClientTransport extends Transport {
@@ -254,7 +256,7 @@ class BridgeConnection implements BidirectionalConnection {
     private readonly _eagerClientConnect: boolean;
     private readonly _serverContextClient: McpClient;
     private readonly _pendingOwners: Map<string, ProviderSide> = new Map();
-    private readonly _pendingForwardRequests: Map<string, { resolve: (message: JSONRPCMessage) => void; reject: (error: Error) => void }> = new Map();
+    private readonly _pendingForwardRequests: Map<string, { resolve: (message: JSONRPCMessage | null) => void; reject: (error: Error) => void; onresponsemessage?: (extra?: MessageExtraInfo) => void; onrawresponse?: (rawMessage: string, extra?: MessageExtraInfo) => boolean | Promise<boolean> }> = new Map();
     private _client: McpClient | null = null;
     private _clientConnectPromise: Promise<void> | null = null;
     private _clientConnected = false;
@@ -309,8 +311,15 @@ class BridgeConnection implements BidirectionalConnection {
     async start(): Promise<void> {
         this._manager.registerConnection(this);
 
-        this._transport.onmessage = (message) => {
-            this._handleInboundMessage(message).catch((error: any) => {
+        const rawAwareTransport = this._transport as any;
+        if (rawAwareTransport && typeof rawAwareTransport === 'object' && 'onrawmessage' in rawAwareTransport) {
+            rawAwareTransport.onrawmessage = (rawMessage: string, extra?: MessageExtraInfo) => {
+                return this._handleRawInboundMessage(rawMessage, extra);
+            };
+        }
+
+        this._transport.onmessage = (message, extra) => {
+            this._handleInboundMessage(message, extra).catch((error: any) => {
                 this._clientTransport.fail(toError(error));
             });
         };
@@ -363,7 +372,7 @@ class BridgeConnection implements BidirectionalConnection {
         await this.sendFromOwner('server', message);
     }
 
-    async request(message: JSONRPCMessage): Promise<JSONRPCMessage> {
+    async request(message: JSONRPCMessage, options?: TransportSendOptions & { onresponsemessage?: (extra?: MessageExtraInfo) => void; onrawresponse?: (rawMessage: string, extra?: MessageExtraInfo) => boolean | Promise<boolean> }): Promise<JSONRPCMessage | null> {
         if (!isRequest(message)) {
             throw new Error('BidirectionalConnection.request requires a JSON-RPC request message');
         }
@@ -373,9 +382,9 @@ class BridgeConnection implements BidirectionalConnection {
             throw new Error(`BidirectionalConnection duplicate forward request id: ${key}`);
         }
 
-        return await new Promise<JSONRPCMessage>((resolve, reject) => {
-            this._pendingForwardRequests.set(key, { resolve, reject });
-            this.sendFromOwner('forward', message).catch((error: any) => {
+        return await new Promise<JSONRPCMessage | null>((resolve, reject) => {
+            this._pendingForwardRequests.set(key, { resolve, reject, onresponsemessage: options?.onresponsemessage, onrawresponse: options?.onrawresponse });
+            this.sendFromOwner('forward', message, options).catch((error: any) => {
                 this._pendingOwners.delete(key);
                 this._pendingForwardRequests.delete(key);
                 reject(toError(error));
@@ -383,15 +392,15 @@ class BridgeConnection implements BidirectionalConnection {
         });
     }
 
-    async notify(message: JSONRPCMessage): Promise<void> {
+    async notify(message: JSONRPCMessage, options?: TransportSendOptions): Promise<void> {
         if (!isNotification(message)) {
             throw new Error('BidirectionalConnection.notify requires a JSON-RPC notification message');
         }
 
-        await this.sendFromOwner('forward', message);
+        await this.sendFromOwner('forward', message, options);
     }
 
-    async sendFromOwner(owner: ProviderSide, message: JSONRPCMessage): Promise<void> {
+    async sendFromOwner(owner: ProviderSide, message: JSONRPCMessage, options?: TransportSendOptions): Promise<void> {
         if (this._closed) {
             throw new Error('BidirectionalSession connection is closed');
         }
@@ -400,7 +409,7 @@ class BridgeConnection implements BidirectionalConnection {
             this._pendingOwners.set(toRequestKey((message as any).id), owner);
         }
 
-        await this._transport.send(message);
+        await this._transport.send(message, options);
     }
 
     private async _ensureClientConnected(): Promise<void> {
@@ -462,7 +471,41 @@ class BridgeConnection implements BidirectionalConnection {
         return this._client;
     }
 
-    private async _handleInboundMessage(message: JSONRPCMessage): Promise<void> {
+    private async _handleRawInboundMessage(rawMessage: string, extra?: MessageExtraInfo): Promise<boolean> {
+        const response = matchRawResponse(rawMessage);
+        if (!response) {
+            const notification = matchRawNotification(rawMessage);
+            if (!notification) {
+                return false;
+            }
+
+            return await this._manager.handleRawPeerNotification(this.sessionId, rawMessage, extra);
+        }
+
+        const key = toRequestKey(response.id);
+        const owner = this._pendingOwners.get(key) || 'client';
+        if (owner !== 'forward') {
+            return false;
+        }
+
+        const pending = this._pendingForwardRequests.get(key);
+        if (!pending || !pending.onrawresponse) {
+            return false;
+        }
+
+        const handled = await pending.onrawresponse(rawMessage, extra);
+        if (!handled) {
+            return false;
+        }
+
+        this._pendingOwners.delete(key);
+        this._pendingForwardRequests.delete(key);
+        pending.onresponsemessage?.(extra);
+        pending.resolve(null);
+        return true;
+    }
+
+    private async _handleInboundMessage(message: JSONRPCMessage, _extra?: MessageExtraInfo): Promise<void> {
         if (isRequest(message)) {
             if ((message as any).method === 'initialize') {
                 const capabilities = (message as any)?.params?.capabilities;
@@ -489,6 +532,7 @@ class BridgeConnection implements BidirectionalConnection {
                 const pending = this._pendingForwardRequests.get(key);
                 if (pending) {
                     this._pendingForwardRequests.delete(key);
+                    pending.onresponsemessage?.(_extra);
                     pending.resolve(message);
                     return;
                 }
@@ -499,7 +543,7 @@ class BridgeConnection implements BidirectionalConnection {
         }
 
         if (isNotification(message)) {
-            await this._manager.handlePeerNotification(this.sessionId, message);
+            await this._manager.handlePeerNotification(this.sessionId, message, _extra);
             this._clientTransport.deliver(message);
             await this._manager.receiveFromConnection(this.sessionId, message);
         }
@@ -526,7 +570,8 @@ export class SessionRelay {
     private readonly _clientInfo: ClientInfo;
     private readonly _clientOptions: any;
     private _ensureServerConnected: (transport: SharedServerTransport) => Promise<void>;
-    private _onPeerNotification?: (context: { sessionId: string; message: JSONRPCMessage }) => Promise<void> | void;
+    private _onPeerNotification?: (context: { sessionId: string; message: JSONRPCMessage; extra?: MessageExtraInfo }) => Promise<void> | void;
+    private _onRawPeerNotification?: (context: { sessionId: string; rawMessage: string; extra?: MessageExtraInfo }) => boolean | Promise<boolean>;
 
     constructor(options: SessionRelayOptions) {
         this._serverTransport = new SharedServerTransport(
@@ -537,14 +582,19 @@ export class SessionRelay {
         this._clientOptions = withReverseServiceCapability(options.clientOptions, true);
         this._ensureServerConnected = options.ensureServerConnected;
         this._onPeerNotification = options.onPeerNotification;
+        this._onRawPeerNotification = options.onRawPeerNotification;
     }
 
     setEnsureServerConnected(ensureServerConnected: (transport: SharedServerTransport) => Promise<void>): void {
         this._ensureServerConnected = ensureServerConnected;
     }
 
-    setOnPeerNotification(onPeerNotification?: (context: { sessionId: string; message: JSONRPCMessage }) => Promise<void> | void): void {
+    setOnPeerNotification(onPeerNotification?: (context: { sessionId: string; message: JSONRPCMessage; extra?: MessageExtraInfo }) => Promise<void> | void): void {
         this._onPeerNotification = onPeerNotification;
+    }
+
+    setOnRawPeerNotification(onRawPeerNotification?: (context: { sessionId: string; rawMessage: string; extra?: MessageExtraInfo }) => boolean | Promise<boolean>): void {
+        this._onRawPeerNotification = onRawPeerNotification;
     }
 
     wsHandler(): any {
@@ -638,9 +688,14 @@ export class SessionRelay {
         return connection ? connection.serverContextClient() : null;
     }
 
-    async handlePeerNotification(sessionId: string, message: JSONRPCMessage): Promise<void> {
+    async handlePeerNotification(sessionId: string, message: JSONRPCMessage, extra?: MessageExtraInfo): Promise<void> {
         if (!this._onPeerNotification) return;
-        await this._onPeerNotification({ sessionId, message });
+        await this._onPeerNotification({ sessionId, message, extra });
+    }
+
+    async handleRawPeerNotification(sessionId: string, rawMessage: string, extra?: MessageExtraInfo): Promise<boolean> {
+        if (!this._onRawPeerNotification) return false;
+        return await this._onRawPeerNotification({ sessionId, rawMessage, extra });
     }
 
     private async _connect(transport: BidirectionalMessageTransport, eagerClientConnect: boolean): Promise<BidirectionalConnection> {

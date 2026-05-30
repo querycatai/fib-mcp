@@ -8,6 +8,9 @@ import type { Transport as SdkTransport } from '@modelcontextprotocol/sdk/shared
 import type { CallToolResult, ServerNotification, ServerRequest } from '@modelcontextprotocol/sdk/types.js';
 import type { StdioServerParameters } from '@modelcontextprotocol/sdk/client/stdio.js';
 
+import type { MessageExtraInfo } from './base';
+import type { TransportSendOptions } from './base';
+
 export type ProviderSide = 'server' | 'client' | 'forward';
 export type AnyToolHandler = (...args: any[]) => any;
 
@@ -144,7 +147,7 @@ export interface BidirectionalConnection {
     listResources(...args: any[]): Promise<any>;
     listPrompts(...args: any[]): Promise<any>;
     getPrompt(...args: any[]): Promise<any>;
-    request(message: Record<string, any>): Promise<Record<string, any>>;
-    notify(message: Record<string, any>): Promise<void>;
+    request(message: Record<string, any>, options?: TransportSendOptions & { onresponsemessage?: (extra?: MessageExtraInfo) => void; onrawresponse?: (rawMessage: string, extra?: MessageExtraInfo) => boolean | Promise<boolean> }): Promise<Record<string, any> | null>;
+    notify(message: Record<string, any>, options?: TransportSendOptions): Promise<void>;
     close(): Promise<void>;
 }

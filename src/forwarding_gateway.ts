@@ -1,5 +1,5 @@
 import { createSessionId } from './base';
-import type { JSONRPCMessage } from './base';
+import type { JSONRPCMessage, MessageExtraInfo } from './base';
 import { ReverseMcpEndpoint } from './reverse_mcp_endpoint';
 import { SessionRelay } from './session_relay';
 import { WebSocketServerTransport } from './ws';
@@ -97,6 +97,7 @@ export interface ForwardingGatewayOptions {
 interface ClientSessionState extends ForwardingGatewaySession {
     transport: WebSocketServerTransport;
     closed: boolean;
+    pendingResponseRawMessage?: string;
 }
 
 function jsonrpcResult(id: any, result: any): JSONRPCMessage {
@@ -131,8 +132,11 @@ export class ForwardingGateway {
             clientInfo: options.serverClientInfo,
             clientOptions: options.serverClientOptions,
             ensureServerConnected: async (_transport) => {},
-            onPeerNotification: async ({ sessionId, message }) => {
-                await this._handleServerNotification(sessionId, message);
+            onPeerNotification: async ({ sessionId, message, extra }) => {
+                await this._handleServerNotification(sessionId, message, extra);
+            },
+            onRawPeerNotification: async ({ sessionId, rawMessage, extra }) => {
+                return await this._handleServerRawNotification(sessionId, rawMessage, extra);
             },
         });
         this._reverseEndpoint = new ReverseMcpEndpoint({
@@ -192,8 +196,8 @@ export class ForwardingGateway {
 
         this._sessions.set(clientSessionId, session);
 
-        transport.onmessage = (message) => {
-            this._handleClientMessage(session, message).catch(async (error: any) => {
+        transport.onmessage = (message, extra) => {
+            this._handleClientMessage(session, message, extra).catch(async (error: any) => {
                 if (!session.closed && isRequest(message)) {
                     await transport.send(jsonrpcError((message as any).id, -32603, toError(error).message));
                 }
@@ -207,7 +211,7 @@ export class ForwardingGateway {
         };
     }
 
-    private async _handleClientMessage(session: ClientSessionState, message: JSONRPCMessage): Promise<void> {
+    private async _handleClientMessage(session: ClientSessionState, message: JSONRPCMessage, extra?: MessageExtraInfo): Promise<void> {
         if (isResponse(message)) {
             return;
         }
@@ -234,7 +238,7 @@ export class ForwardingGateway {
         }
 
         if (isNotification(message)) {
-            await this._handleClientNotification(session, message);
+            await this._handleClientNotification(session, message, extra);
         }
     }
 
@@ -300,9 +304,9 @@ export class ForwardingGateway {
         }
     }
 
-    private async _handleClientNotification(session: ClientSessionState, message: JSONRPCMessage): Promise<void> {
+    private async _handleClientNotification(session: ClientSessionState, message: JSONRPCMessage, extra?: MessageExtraInfo): Promise<void> {
         const defaultNext = async (msg: JSONRPCMessage = message) => {
-            await this._defaultClientNotification(session, msg);
+            await this._defaultClientNotification(session, msg, msg === message ? extra : undefined);
         };
 
         if (this._options.onClientNotification) {
@@ -313,14 +317,14 @@ export class ForwardingGateway {
         }
     }
 
-    private async _handleServerNotification(serverSessionId: string, message: JSONRPCMessage): Promise<void> {
+    private async _handleServerNotification(serverSessionId: string, message: JSONRPCMessage, extra?: MessageExtraInfo): Promise<void> {
         const session = this._findSessionByServerSessionId(serverSessionId);
         if (!session || session.closed || !session.initialized) {
             return;
         }
 
         const defaultNext = async (msg: JSONRPCMessage = message) => {
-            await session.transport.send(msg);
+            await session.transport.send(msg, msg === message && extra?.rawMessage ? { rawMessage: extra.rawMessage } : undefined);
         };
 
         if (this._options.onServerNotification) {
@@ -331,6 +335,20 @@ export class ForwardingGateway {
         }
     }
 
+    private async _handleServerRawNotification(serverSessionId: string, rawMessage: string, extra?: MessageExtraInfo): Promise<boolean> {
+        const session = this._findSessionByServerSessionId(serverSessionId);
+        if (!session || session.closed || !session.initialized) {
+            return true;
+        }
+
+        if (this._options.onServerNotification) {
+            return false;
+        }
+
+        await session.transport.send({ jsonrpc: '2.0' }, { rawMessage: extra?.rawMessage || rawMessage });
+        return true;
+    }
+
     private async _defaultClientRequest(session: ClientSessionState, message: JSONRPCMessage): Promise<void> {
         if (!session.serverConnection) {
             const error: any = new Error('server connection is not established');
@@ -338,22 +356,37 @@ export class ForwardingGateway {
             throw error;
         }
 
-        const response = await session.serverConnection.request(message as any);
+        session.pendingResponseRawMessage = undefined;
+        const response = await session.serverConnection.request(message as any, {
+            onresponsemessage: (extra) => {
+                session.pendingResponseRawMessage = extra?.rawMessage;
+            },
+            onrawresponse: async (rawMessage) => {
+                await session.transport.send({ jsonrpc: '2.0' }, { rawMessage });
+                return true;
+            },
+        });
+        if (response === null) {
+            session.pendingResponseRawMessage = undefined;
+            return;
+        }
         if (!isResponse(response as any)) {
             const error: any = new Error('forward request did not produce a JSON-RPC response');
             error.code = -32603;
             throw error;
         }
 
-        await session.transport.send(response as any);
+        const rawMessage = session.pendingResponseRawMessage;
+        session.pendingResponseRawMessage = undefined;
+        await session.transport.send(response as any, rawMessage ? { rawMessage } : undefined);
     }
 
-    private async _defaultClientNotification(session: ClientSessionState, message: JSONRPCMessage): Promise<void> {
+    private async _defaultClientNotification(session: ClientSessionState, message: JSONRPCMessage, extra?: MessageExtraInfo): Promise<void> {
         if (!session.serverConnection) {
             return;
         }
 
-        await session.serverConnection.notify(message as any);
+        await session.serverConnection.notify(message as any, extra?.rawMessage ? { rawMessage: extra.rawMessage } : undefined);
     }
 
     private async _closeClientSession(session: ClientSessionState): Promise<void> {

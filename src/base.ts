@@ -10,12 +10,14 @@ export interface MessageExtraInfo {
     authInfo?: any;
     closeSSEStream?: () => void;
     closeStandaloneSSEStream?: () => void;
+    rawMessage?: string;
 }
 
 export interface TransportSendOptions {
     relatedRequestId?: string | number;
     resumptionToken?: string;
     onresumptiontoken?: (token: string) => void;
+    rawMessage?: string;
 }
 
 export type MessageHandler = (msg: JSONRPCMessage, extra?: MessageExtraInfo) => void | Promise<void>;

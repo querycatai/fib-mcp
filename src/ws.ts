@@ -8,11 +8,22 @@
  */
 
 import { Transport } from './base';
-import type { JSONRPCMessage } from './base';
+import type { JSONRPCMessage, TransportSendOptions } from './base';
 
 declare const WebSocket: any;
 
 const DEFAULT_WS_PROTOCOL = 'mcp';
+
+function extractWebSocketRawMessage(evt: any): string | undefined {
+    if (typeof evt?.data === 'string') return evt.data;
+    if (typeof evt?.string === 'function') {
+        try {
+            const raw = evt.string();
+            return typeof raw === 'string' ? raw : undefined;
+        } catch (_) {}
+    }
+    return undefined;
+}
 
 export interface WebSocketConnectRequest {
     headers?: any;
@@ -59,7 +70,9 @@ export class WebSocketServerTransport extends Transport {
 
         socket.onmessage = function (evt: any) {
             try {
-                self._receive(evt.json());
+                const rawMessage = extractWebSocketRawMessage(evt);
+                const message = rawMessage ? JSON.parse(rawMessage) : evt.json();
+                self._receive(message, rawMessage ? { rawMessage } : undefined);
             } catch (e: any) {
                 self._error(new Error('ws: JSON parse error: ' + e.message));
             }
@@ -79,9 +92,9 @@ export class WebSocketServerTransport extends Transport {
         this._started = true;
     }
 
-    async send(message: JSONRPCMessage): Promise<void> {
+    async send(message: JSONRPCMessage, options?: TransportSendOptions): Promise<void> {
         if (!this._socket) throw new Error('WebSocketServerTransport: no client connected');
-        this._socket.send(JSON.stringify(message));
+        this._socket.send(options?.rawMessage ?? JSON.stringify(message));
     }
 
     async close(): Promise<void> {

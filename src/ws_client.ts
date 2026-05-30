@@ -1,12 +1,24 @@
 import { JSONRPCMessageSchema } from '@modelcontextprotocol/sdk/types.js';
 
+function extractWebSocketRawMessage(evt: any): string | undefined {
+    if (typeof evt?.data === 'string') return evt.data;
+    if (typeof evt?.string === 'function') {
+        try {
+            const raw = evt.string();
+            return typeof raw === 'string' ? raw : undefined;
+        } catch (_) {}
+    }
+    return undefined;
+}
+
 export interface WsClientConnectOptions {
     headers?: Record<string, string>;
     protocol?: string;
 }
 
 export class FibWebSocketClientTransport {
-    onmessage: ((message: any) => void) | null = null;
+    onmessage: ((message: any, extra?: { rawMessage?: string }) => void) | null = null;
+    onrawmessage: ((rawMessage: string, extra?: { rawMessage?: string }) => boolean | Promise<boolean>) | null = null;
     onerror: ((error: any) => void) | null = null;
     onclose: (() => void) | null = null;
 
@@ -45,9 +57,23 @@ export class FibWebSocketClientTransport {
 
             socket.onmessage = (evt: any) => {
                 try {
-                    const raw = evt?.json ? evt.json() : JSON.parse(String(evt?.data || 'null'));
+                    const rawMessage = extractWebSocketRawMessage(evt);
+                    const extra = rawMessage ? { rawMessage } : undefined;
+                    if (rawMessage && this.onrawmessage) {
+                        Promise.resolve(this.onrawmessage(rawMessage, extra)).then((handled) => {
+                            if (handled) return;
+                            const raw = evt?.json ? evt.json() : JSON.parse(rawMessage);
+                            const message = JSONRPCMessageSchema.parse(raw);
+                            if (this.onmessage) this.onmessage(message, extra);
+                        }).catch((error: any) => {
+                            if (this.onerror) this.onerror(error);
+                        });
+                        return;
+                    }
+
+                    const raw = rawMessage ? JSON.parse(rawMessage) : evt?.json ? evt.json() : JSON.parse(String(evt?.data || 'null'));
                     const message = JSONRPCMessageSchema.parse(raw);
-                    if (this.onmessage) this.onmessage(message);
+                    if (this.onmessage) this.onmessage(message, extra);
                 } catch (error: any) {
                     if (this.onerror) this.onerror(error);
                 }
@@ -71,12 +97,12 @@ export class FibWebSocketClientTransport {
         });
     }
 
-    send(message: any): Promise<void> {
+    send(message: any, options?: { rawMessage?: string }): Promise<void> {
         if (!this._socket) {
             return Promise.reject(new Error('FibWebSocketClientTransport not connected'));
         }
 
-        this._socket.send(JSON.stringify(message));
+        this._socket.send(options?.rawMessage ?? JSON.stringify(message));
         return Promise.resolve();
     }
 
