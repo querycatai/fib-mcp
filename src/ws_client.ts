@@ -17,12 +17,13 @@ export interface WsClientConnectOptions {
 }
 
 export class FibWebSocketClientTransport {
-    onmessage: ((message: any, extra?: { rawMessage?: string }) => void) | null = null;
+    onmessage: ((message: any, extra?: { rawMessage?: string }) => void | Promise<void>) | null = null;
     onrawmessage: ((rawMessage: string, extra?: { rawMessage?: string }) => boolean | Promise<boolean>) | null = null;
     onerror: ((error: any) => void) | null = null;
     onclose: (() => void) | null = null;
 
     private _socket: any = null;
+    private _messageQueue: Promise<void> = Promise.resolve();
     private readonly _url: string;
     private readonly _options: WsClientConnectOptions;
 
@@ -56,27 +57,20 @@ export class FibWebSocketClientTransport {
             };
 
             socket.onmessage = (evt: any) => {
-                try {
+                this._enqueueInboundMessage(async () => {
                     const rawMessage = extractWebSocketRawMessage(evt);
                     const extra = rawMessage ? { rawMessage } : undefined;
                     if (rawMessage && this.onrawmessage) {
-                        Promise.resolve(this.onrawmessage(rawMessage, extra)).then((handled) => {
-                            if (handled) return;
-                            const raw = evt?.json ? evt.json() : JSON.parse(rawMessage);
-                            const message = JSONRPCMessageSchema.parse(raw);
-                            if (this.onmessage) this.onmessage(message, extra);
-                        }).catch((error: any) => {
-                            if (this.onerror) this.onerror(error);
-                        });
-                        return;
+                        const handled = await this.onrawmessage(rawMessage, extra);
+                        if (handled) return;
                     }
 
                     const raw = rawMessage ? JSON.parse(rawMessage) : evt?.json ? evt.json() : JSON.parse(String(evt?.data || 'null'));
                     const message = JSONRPCMessageSchema.parse(raw);
-                    if (this.onmessage) this.onmessage(message, extra);
-                } catch (error: any) {
-                    if (this.onerror) this.onerror(error);
-                }
+                    if (this.onmessage) {
+                        await this.onmessage(message, extra);
+                    }
+                });
             };
 
             socket.onclose = () => {
@@ -117,6 +111,16 @@ export class FibWebSocketClientTransport {
         }
 
         return Promise.resolve();
+    }
+
+    private _enqueueInboundMessage(handler: () => Promise<void>): void {
+        const next = this._messageQueue.then(() => handler());
+        this._messageQueue = next.catch(() => {});
+        next.catch((error: any) => {
+            if (this.onerror) {
+                this.onerror(error);
+            }
+        });
     }
 }
 

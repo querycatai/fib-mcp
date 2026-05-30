@@ -135,7 +135,7 @@ export class ForwardingGateway {
             onPeerNotification: async ({ sessionId, message, extra }) => {
                 await this._handleServerNotification(sessionId, message, extra);
             },
-            onRawPeerNotification: async ({ sessionId, rawMessage, extra }) => {
+            onRawPeerNotification: options.onServerNotification ? undefined : async ({ sessionId, rawMessage, extra }) => {
                 return await this._handleServerRawNotification(sessionId, rawMessage, extra);
             },
         });

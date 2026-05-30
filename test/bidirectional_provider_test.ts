@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'assert';
 import coroutine from 'coroutine';
 import http from 'http';
+import path from 'path';
 
 import {
     BidirectionalSession,
@@ -897,9 +898,10 @@ describe('BidirectionalSession stdio mode', () => {
         }));
 
         let connection: any = null;
+        const fixturePath = path.join(process.cwd(), 'test', 'fixtures', 'stdio_bidirectional_child.ts');
         try {
             connection = await withTimeout(
-                parentSession.connect({ transport: 'stdio', command: 'fibjs', args: ['packages/fib-mcp/test/fixtures/stdio_bidirectional_child.ts'] }),
+                parentSession.connect({ transport: 'stdio', command: 'fibjs', args: [fixturePath] }),
                 5000,
                 'parent connect via stdio'
             );
@@ -929,10 +931,11 @@ describe('BidirectionalSession stdio mode', () => {
 
     it('supports forward calls from a normal MCP stdio client', async () => {
         const plainServer = new McpClient({ name: 'plain-client', version: '1.0.0' });
+        const fixturePath = path.join(process.cwd(), 'test', 'fixtures', 'stdio_plain_server.ts');
 
         try {
             await withTimeout(
-                plainServer.connect({ transport: 'stdio', command: 'fibjs', args: ['packages/fib-mcp/test/fixtures/stdio_plain_server.ts'] }),
+                plainServer.connect({ transport: 'stdio', command: 'fibjs', args: [fixturePath] }),
                 5000,
                 'plain stdio client connect'
             );

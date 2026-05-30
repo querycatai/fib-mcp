@@ -19,7 +19,7 @@ import {
     type ClientInfo,
     type ProviderSide,
 } from './bidirectional_shared';
-import { matchRawNotification, matchRawResponse } from './raw_message';
+import { matchRawMessage } from './raw_message';
 
 interface SessionRelayOptions {
     clientInfo?: ClientInfo;
@@ -472,17 +472,20 @@ class BridgeConnection implements BidirectionalConnection {
     }
 
     private async _handleRawInboundMessage(rawMessage: string, extra?: MessageExtraInfo): Promise<boolean> {
-        const response = matchRawResponse(rawMessage);
-        if (!response) {
-            const notification = matchRawNotification(rawMessage);
-            if (!notification) {
+        const match = matchRawMessage(rawMessage);
+        if (!match) {
+            return false;
+        }
+
+        if (match.type === 'notification') {
+            if (!this._manager.canHandleRawPeerNotification()) {
                 return false;
             }
 
             return await this._manager.handleRawPeerNotification(this.sessionId, rawMessage, extra);
         }
 
-        const key = toRequestKey(response.id);
+        const key = toRequestKey(match.id);
         const owner = this._pendingOwners.get(key) || 'client';
         if (owner !== 'forward') {
             return false;
@@ -696,6 +699,10 @@ export class SessionRelay {
     async handleRawPeerNotification(sessionId: string, rawMessage: string, extra?: MessageExtraInfo): Promise<boolean> {
         if (!this._onRawPeerNotification) return false;
         return await this._onRawPeerNotification({ sessionId, rawMessage, extra });
+    }
+
+    canHandleRawPeerNotification(): boolean {
+        return !!this._onRawPeerNotification;
     }
 
     private async _connect(transport: BidirectionalMessageTransport, eagerClientConnect: boolean): Promise<BidirectionalConnection> {
