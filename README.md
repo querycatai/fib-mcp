@@ -318,6 +318,51 @@ Handler context:
 - `ctx.client`: peer client bound to current session
 - `ctx.extra`: MCP request metadata (includes `sessionId`)
 
+### Sending Notifications
+
+Bidirectional sessions support two notification paths:
+
+#### Forward channel — `connection.sendNotification()`
+
+The `BidirectionalConnection` returned by `connect()` / `accept()` / `listenStdio()`
+exposes `sendNotification(method, params?, options?)`. This is the simplest path
+for the **connecting side** to push notifications to the accepted side.
+
+```ts
+const conn = await peer.connect({ transport: 'ws', url: 'ws://...' });
+
+// Connecting side → accepted side, no sessionId needed
+await conn.sendNotification('my/event', { data: 'hello' });
+```
+
+Also available as `connection.notify(message)` for full JSON-RPC messages.
+
+#### Reverse channel — `session.sendNotification()`
+
+The `BidirectionalSession` itself exposes `sendNotification()` through the reverse
+MCP endpoint. When called inside a tool handler, the notification is automatically
+routed to the calling peer. Outside a handler, a target must be specified.
+
+```ts
+// Inside a tool handler on the accepted side
+session.tool('server.notify', {}, async (_args, _ctx) => {
+  await session.sendNotification('notifications/progress', {
+    progress: 50, total: 100,
+  });
+  return { content: [{ type: 'text', text: 'done' }] };
+});
+
+// Outside a handler — must specify sessionId
+await session.sendNotification('my/custom', { payload: 'hello' }, { sessionId: 'mcp-xxx' });
+```
+
+Options for `session.sendNotification`:
+
+- `sessionId` — target a specific session
+- `relatedRequestId` — target the session that owns a specific request
+
+Without a resolvable session context, an error is thrown.
+
 ### Connection APIs
 
 WebSocket convenience:
@@ -534,6 +579,26 @@ The resolved `authContext` is available on `ctx.session.authContext` in all hook
 | `serverClientOptions` | `object?` | Options forwarded to the outbound client |
 | `reverseServerOptions` | `object?` | Options for the local reverse-MCP server endpoint |
 
+### Sending Notifications (Reverse Channel)
+
+The gateway exposes `sendNotification()` through the reverse MCP channel.
+When called inside a gateway tool handler, it must use an explicit `sessionId`
+target captured from `ctx.extra.sessionId`.
+
+```ts
+gateway.tool('gateway.notify', {}, async (_args, ctx) => {
+  await gateway.sendNotification(
+    'gateway/custom-event',
+    { payload: 'hello-from-gateway' },
+    { sessionId: ctx.extra.sessionId },
+  );
+  return { content: [{ type: 'text', text: 'notified' }] };
+});
+```
+
+Calling `sendNotification()` without a target outside a handler context
+throws an error.
+
 ### WebSocket Example
 
 ```ts
@@ -626,6 +691,26 @@ Custom transport should implement SDK `Transport` behavior:
 ## Notifications
 
 Notification flow works on both normal MCP transports and `BidirectionalSession`.
+
+### Forward channel — `connection.sendNotification()`
+
+The `BidirectionalConnection` object returned by `connect()` / `accept()` /
+`listenStdio()` provides `sendNotification(method, params?, options?)` for
+sending notifications through the forward channel. This is the simplest path
+for the **connecting side**.
+
+```ts
+const conn = await session.connect({ transport: 'ws', url: 'ws://...' });
+await conn.sendNotification('my/event', { data: 'hello' });
+```
+
+### Reverse channel — `session.sendNotification()`
+
+`BidirectionalSession` and `ForwardingGateway` also expose `sendNotification()`
+through the reverse MCP endpoint. Inside a tool handler, the notification
+auto-targets the calling peer. Outside a handler, an explicit target is required.
+
+See the [Bidirectional Session](#sending-notifications) section for details.
 
 ## Testing
 

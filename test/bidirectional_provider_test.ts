@@ -9,6 +9,10 @@ import {
     McpClient,
 } from '../index';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import {
+    NotificationSchema,
+} from '@modelcontextprotocol/sdk/types.js';
+import { z } from 'zod';
 
 const basePort = coroutine.vmid * 10000 + 4100;
 let portOffset = 0;
@@ -882,6 +886,287 @@ describe('BidirectionalSession public APIs', () => {
             }
             try { await peer.close(); } catch (_) {}
             try { await accepted.close(); } catch (_) {}
+        }
+    });
+
+    it('sendNotification inside tool handler delivers notification to peer', async () => {
+        const port = nextPort();
+        const accepted = createSession('accepted-server', 'accepted-client');
+        const peer = createSession('peer-server', 'peer-client');
+        let connection: any = null;
+        let host: any = null;
+
+        const AcceptedNotificationSchema = (NotificationSchema as any).extend({
+            method: z.literal('accepted/custom-event'),
+            params: z.object({
+                payload: z.string(),
+            }),
+        });
+
+        let resolveNotification: ((notification: any) => void) | null = null;
+        const notificationReceived = new Promise<any>((resolve) => {
+            resolveNotification = resolve;
+        });
+
+        peer.setNotificationHandler(AcceptedNotificationSchema, async (notification: any) => {
+            if (resolveNotification) {
+                resolveNotification(notification);
+                resolveNotification = null;
+            }
+        });
+
+        accepted.tool('server.notify-custom', {}, async (_args: any, _ctx: any) => {
+            await accepted.sendNotification('accepted/custom-event', { payload: 'hello-from-accepted' });
+            return { content: [{ type: 'text', text: 'notified' }] };
+        });
+
+        try {
+            host = new http.Server(port, {
+                '/mcp': accepted.wsHandler(),
+            });
+            host.start();
+            coroutine.sleep(50);
+
+            connection = await withTimeout(
+                peer.connect({ transport: 'ws', url: `ws://127.0.0.1:${port}/mcp` }),
+                3000,
+                'bidirectional open'
+            );
+
+            const result = await withTimeout(
+                connection.callTool({ name: 'server.notify-custom', arguments: {} }),
+                3000,
+                'call notify-custom tool'
+            );
+
+            assert.equal(extractFirstText(result), 'notified');
+
+            const notification = await withTimeout(notificationReceived, 3000, 'receive custom notification from accepted');
+            assert.equal(notification?.method, 'accepted/custom-event');
+            assert.equal(notification?.params?.payload, 'hello-from-accepted');
+        } finally {
+            if (connection) {
+                try { await connection.close(); } catch (_) {}
+            }
+            try { await peer.close(); } catch (_) {}
+            try { await accepted.close(); } catch (_) {}
+            if (host) {
+                try { host.stop(); } catch (_) {}
+            }
+        }
+    });
+
+    it('connection.sendNotification from connecting side delivers notification to accepted side', async () => {
+        const port = nextPort();
+        const accepted = createSession('accepted-server', 'accepted-client');
+        const peer = createSession('peer-server', 'peer-client');
+        let connection: any = null;
+        let host: any = null;
+
+        const PeerNotificationSchema = (NotificationSchema as any).extend({
+            method: z.literal('peer/hello'),
+            params: z.object({
+                text: z.string(),
+            }),
+        });
+
+        let resolveNotification: ((notification: any) => void) | null = null;
+        const notificationReceived = new Promise<any>((resolve) => {
+            resolveNotification = resolve;
+        });
+
+        accepted.setNotificationHandler(PeerNotificationSchema, async (notification: any) => {
+            if (resolveNotification) {
+                resolveNotification(notification);
+                resolveNotification = null;
+            }
+        });
+
+        try {
+            host = new http.Server(port, {
+                '/mcp': accepted.wsHandler(),
+            });
+            host.start();
+            coroutine.sleep(50);
+
+            connection = await withTimeout(
+                peer.connect({ transport: 'ws', url: `ws://127.0.0.1:${port}/mcp` }),
+                3000,
+                'bidirectional open'
+            );
+
+            // The connecting side (peer) sends a notification via connection.sendNotification
+            await withTimeout(
+                connection.sendNotification('peer/hello', { text: 'hello-from-peer' }),
+                3000,
+                'peer send notification via connection'
+            );
+
+            const notification = await withTimeout(notificationReceived, 3000, 'accepted receive notification from peer');
+            assert.equal(notification?.method, 'peer/hello');
+            assert.equal(notification?.params?.text, 'hello-from-peer');
+        } finally {
+            if (connection) {
+                try { await connection.close(); } catch (_) {}
+            }
+            try { await peer.close(); } catch (_) {}
+            try { await accepted.close(); } catch (_) {}
+            if (host) {
+                try { host.stop(); } catch (_) {}
+            }
+        }
+    });
+
+    it('sendNotification targets specific peer with sessionId option', async () => {
+        const port = nextPort();
+        const accepted = createSession('accepted-server', 'accepted-client');
+        const peerOne = createSession('peer-one', 'peer-one-client', {
+            serverInfo: { name: 'peer-one', version: '1.0.0' },
+        });
+        const peerTwo = createSession('peer-two', 'peer-two-client', {
+            serverInfo: { name: 'peer-two', version: '1.0.0' },
+        });
+        let connectionOne: any = null;
+        let connectionTwo: any = null;
+        let host: any = null;
+
+        const notifyOne = new Promise<any>((resolve) => {
+            peerOne.setNotificationHandler(
+                (NotificationSchema as any).extend({ method: z.literal('accepted/targeted') }),
+                async (notification: any) => { resolve(notification); }
+            );
+        });
+
+        let peerTwoReceived = false;
+        peerTwo.setNotificationHandler(
+            (NotificationSchema as any).extend({ method: z.literal('accepted/targeted') }),
+            async (_notification: any) => { peerTwoReceived = true; }
+        );
+
+        accepted.tool('server.expose-session', {}, async (_args: any, ctx: any) => {
+            return { content: [{ type: 'text', text: String(ctx.extra?.sessionId || '') }] };
+        });
+
+        try {
+            host = new http.Server(port, {
+                '/mcp': accepted.wsHandler(),
+            });
+            host.start();
+            coroutine.sleep(50);
+
+            connectionOne = await withTimeout(
+                peerOne.connect({ transport: 'ws', url: `ws://127.0.0.1:${port}/mcp` }),
+                3000,
+                'open peer one'
+            );
+
+            const sessionResult = await withTimeout(
+                connectionOne.callTool({ name: 'server.expose-session', arguments: {} }),
+                3000,
+                'call expose-session tool'
+            );
+            const sessionIdOne = extractFirstText(sessionResult);
+            assert.ok(sessionIdOne.length > 0);
+
+            connectionTwo = await withTimeout(
+                peerTwo.connect({ transport: 'ws', url: `ws://127.0.0.1:${port}/mcp` }),
+                3000,
+                'open peer two'
+            );
+
+            // Send to peer one specifically
+            await withTimeout(
+                accepted.sendNotification(
+                    'accepted/targeted',
+                    { payload: 'only-for-peer-one' },
+                    { sessionId: sessionIdOne },
+                ),
+                3000,
+                'send targeted notification'
+            );
+
+            const r1 = await withTimeout(notifyOne, 3000, 'peer one receive targeted notification');
+            assert.equal(r1?.method, 'accepted/targeted');
+            assert.equal(r1?.params?.payload, 'only-for-peer-one');
+
+            // Peer two should NOT have received it
+            await coroutine.sleep(100);
+            assert.equal(peerTwoReceived, false);
+        } finally {
+            if (connectionOne) { try { await connectionOne.close(); } catch (_) {} }
+            if (connectionTwo) { try { await connectionTwo.close(); } catch (_) {} }
+            try { await peerOne.close(); } catch (_) {}
+            try { await peerTwo.close(); } catch (_) {}
+            try { await accepted.close(); } catch (_) {}
+            if (host) { try { host.stop(); } catch (_) {} }
+        }
+    });
+
+    it('sendNotification from tool handler targets only the calling peer when multiple peers are connected', async () => {
+        const port = nextPort();
+        const accepted = createSession('accepted-server', 'accepted-client');
+        const peerOne = createSession('peer-one', 'peer-one-client', {
+            serverInfo: { name: 'peer-one', version: '1.0.0' },
+        });
+        const peerTwo = createSession('peer-two', 'peer-two-client', {
+            serverInfo: { name: 'peer-two', version: '1.0.0' },
+        });
+        let connectionOne: any = null;
+        let connectionTwo: any = null;
+        let host: any = null;
+
+        const notifyOne = new Promise<any>((resolve) => {
+            peerOne.setNotificationHandler(
+                (NotificationSchema as any).extend({ method: z.literal('accepted/calling-peer') }),
+                async (notification: any) => { resolve(notification); }
+            );
+        });
+
+        let peerTwoReceived = false;
+        peerTwo.setNotificationHandler(
+            (NotificationSchema as any).extend({ method: z.literal('accepted/calling-peer') }),
+            async (_notification: any) => { peerTwoReceived = true; }
+        );
+
+        accepted.tool('server.notify-calling-peer', {}, async (_args: any, _ctx: any) => {
+            await accepted.sendNotification('accepted/calling-peer', { payload: 'only-for-caller' });
+            return { content: [{ type: 'text', text: 'sent' }] };
+        });
+
+        try {
+            host = new http.Server(port, {
+                '/mcp': accepted.wsHandler(),
+            });
+            host.start();
+            coroutine.sleep(50);
+
+            [connectionOne, connectionTwo] = await Promise.all([
+                withTimeout(peerOne.connect({ transport: 'ws', url: `ws://127.0.0.1:${port}/mcp` }), 3000, 'open peer one'),
+                withTimeout(peerTwo.connect({ transport: 'ws', url: `ws://127.0.0.1:${port}/mcp` }), 3000, 'open peer two'),
+            ]);
+
+            // Peer one calls the tool → notification should only go to peer one
+            const result = await withTimeout(
+                connectionOne.callTool({ name: 'server.notify-calling-peer', arguments: {} }),
+                3000,
+                'peer one call notify-calling-peer tool'
+            );
+            assert.equal(extractFirstText(result), 'sent');
+
+            const r1 = await withTimeout(notifyOne, 3000, 'peer one receive notification');
+            assert.equal(r1?.method, 'accepted/calling-peer');
+            assert.equal(r1?.params?.payload, 'only-for-caller');
+
+            // Peer two should NOT have received it
+            await coroutine.sleep(100);
+            assert.equal(peerTwoReceived, false);
+        } finally {
+            if (connectionOne) { try { await connectionOne.close(); } catch (_) {} }
+            if (connectionTwo) { try { await connectionTwo.close(); } catch (_) {} }
+            try { await peerOne.close(); } catch (_) {}
+            try { await peerTwo.close(); } catch (_) {}
+            try { await accepted.close(); } catch (_) {}
+            if (host) { try { host.stop(); } catch (_) {} }
         }
     });
 });

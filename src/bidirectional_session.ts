@@ -82,6 +82,18 @@ export class BidirectionalSession {
         return this._reverseEndpoint.registerCapabilities(...args);
     }
 
+    /**
+     * Send a notification through the reverse MCP channel.
+     * @see ReverseMcpEndpoint.sendNotification
+     */
+    async sendNotification(
+        method: string,
+        params?: Record<string, any>,
+        options?: import('./base').TransportSendOptions & { sessionId?: string },
+    ): Promise<void> {
+        return this._reverseEndpoint.sendNotification(method, params, options);
+    }
+
     wsHandler(): any {
         return this._relay.wsHandler();
     }

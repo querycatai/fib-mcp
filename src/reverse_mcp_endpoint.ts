@@ -2,6 +2,7 @@ import { McpServer } from './server';
 import { McpClient } from './client';
 import { withReverseServiceCapability, type AnyToolHandler, type BidirectionalToolCallback, type BidirectionalToolContext, type BidirectionalToolExtra, type ClientInfo } from './bidirectional_shared';
 import type { SharedServerTransport } from './session_relay';
+import type { TransportSendOptions } from './base';
 import type { RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ZodRawShapeCompat } from '@modelcontextprotocol/sdk/server/zod-compat.js';
 import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
@@ -72,6 +73,33 @@ export class ReverseMcpEndpoint {
 
     registerCapabilities(...args: any[]): any {
         return (this._server as any).server.registerCapabilities(...args);
+    }
+
+    /**
+     * Send a notification through the reverse MCP channel.
+     *
+     * When called inside a tool handler (where a session is active),
+     * the notification is automatically routed to the connected peer
+     * that originated the current request.
+     *
+     * When called outside any handler context (no active session), a
+     * target must be explicitly specified via options.
+     *
+     * @param method  - The notification method name (e.g. "notifications/progress").
+     * @param params  - Optional notification parameters.
+     * @param options - Optional transport options. Use `sessionId` to target
+     *                  a specific session, or `relatedRequestId` to target the
+     *                  session that owns a specific request.
+     */
+    async sendNotification(
+        method: string,
+        params?: Record<string, any>,
+        options?: TransportSendOptions & { sessionId?: string },
+    ): Promise<void> {
+        await (this._server as any).server.notification(
+            { method, params: params ?? {} },
+            options,
+        );
     }
 
     async ensureConnected(transport: SharedServerTransport): Promise<void> {

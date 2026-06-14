@@ -1357,4 +1357,250 @@ describe('ForwardingGateway', () => {
             }
         }
     });
+
+    it('sendNotification from gateway reverse tool delivers notification to the calling agent', async () => {
+        const agentPort = nextPort();
+        const gatewayPort = nextPort();
+        const agent = new BidirectionalSession({
+            serverInfo: { name: 'agent-server', version: '1.0.0' },
+            clientInfo: { name: 'agent-client', version: '1.0.0' },
+        });
+        const gateway = new ForwardingGateway({
+            appInfo: { name: 'app-gateway', version: '1.0.0' },
+            connectServer: async () => ({ transport: 'ws', url: `ws://127.0.0.1:${agentPort}/mcp` }),
+        });
+        let agentHost: any = null;
+        let gatewayHost: any = null;
+
+        const GatewayNotificationSchema = (NotificationSchema as any).extend({
+            method: z.literal('gateway/custom-event'),
+            params: z.object({
+                payload: z.string(),
+            }),
+        });
+
+        let resolveNotification: ((notification: any) => void) | null = null;
+        const notificationReceived = new Promise<any>((resolve) => {
+            resolveNotification = resolve;
+        });
+
+        agent.setNotificationHandler(GatewayNotificationSchema, async (notification: any) => {
+            if (resolveNotification) {
+                resolveNotification(notification);
+                resolveNotification = null;
+            }
+        });
+
+        // Gateway reverse tool: captures sessionId and sends notification back with explicit target
+        let gatewaySessionId: string | null = null;
+        gateway.tool('gateway.notify-custom', {}, async (_args: any, ctx: any) => {
+            gatewaySessionId = ctx.extra?.sessionId ?? null;
+            await gateway.sendNotification(
+                'gateway/custom-event',
+                { payload: 'hello-from-gateway' },
+                { sessionId: gatewaySessionId! },
+            );
+            return { content: [{ type: 'text', text: 'notified-from-gateway' }] };
+        });
+
+        // Agent tool: calls gateway reverse tool, then returns its result
+        agent.tool('agent.call-gateway-notify', {}, async (_args: any, ctx: any) => {
+            const result = await ctx.client.callTool({ name: 'gateway.notify-custom', arguments: {} });
+            return { content: [{ type: 'text', text: `agent-got:${extractFirstText(result)}` }] };
+        });
+
+        try {
+            agentHost = new http.Server(agentPort, {
+                '/mcp': agent.wsHandler(),
+            });
+            gatewayHost = new http.Server(gatewayPort, {
+                '/mcp': gateway.wsHandler(),
+            });
+            agentHost.start();
+            gatewayHost.start();
+            coroutine.sleep(50);
+
+            const connection = await withTimeout(
+                agent.connect({ transport: 'ws', url: `ws://127.0.0.1:${gatewayPort}/mcp` }),
+                3000,
+                'agent connect gateway for reverse notification'
+            );
+
+            // Agent calls its own tool which reverse-calls gateway tool
+            const result = await withTimeout(
+                connection.callTool({ name: 'agent.call-gateway-notify', arguments: {} }),
+                3000,
+                'agent call gateway-notify via reverse'
+            );
+            assert.equal(extractFirstText(result), 'agent-got:notified-from-gateway');
+
+            const notification = await withTimeout(
+                notificationReceived,
+                3000,
+                'agent receive custom notification from gateway'
+            );
+            assert.equal(notification?.method, 'gateway/custom-event');
+            assert.equal(notification?.params?.payload, 'hello-from-gateway');
+        } finally {
+            try { await gateway.close(); } catch (_) {}
+            try { await agent.close(); } catch (_) {}
+            if (gatewayHost) {
+                try { gatewayHost.stop(); } catch (_) {}
+            }
+            if (agentHost) {
+                try { agentHost.stop(); } catch (_) {}
+            }
+        }
+    });
+
+    it('sendNotification from gateway with sessionId targets specific agent session', async () => {
+        const agentPort = nextPort();
+        const gatewayPort = nextPort();
+        let gatewaySessionId: string | null = null;
+        const agent = new BidirectionalSession({
+            serverInfo: { name: 'agent-server', version: '1.0.0' },
+            clientInfo: { name: 'agent-client', version: '1.0.0' },
+        });
+        const gateway = new ForwardingGateway({
+            appInfo: { name: 'app-gateway', version: '1.0.0' },
+            connectServer: async () => ({ transport: 'ws', url: `ws://127.0.0.1:${agentPort}/mcp` }),
+        });
+        let agentHost: any = null;
+        let gatewayHost: any = null;
+
+        let resolveNotification: ((notification: any) => void) | null = null;
+        const notificationReceived = new Promise<any>((resolve) => {
+            resolveNotification = resolve;
+        });
+
+        agent.setNotificationHandler(
+            (NotificationSchema as any).extend({ method: z.literal('gateway/targeted') }),
+            async (notification: any) => {
+                if (resolveNotification) {
+                    resolveNotification(notification);
+                    resolveNotification = null;
+                }
+            },
+        );
+
+        // Gateway reverse tool: captures sessionId from gateway's perspective
+        gateway.tool('gateway.capture-session', {}, async (_args: any, ctx: any) => {
+            gatewaySessionId = ctx.extra?.sessionId ?? null;
+            return { content: [{ type: 'text', text: String(gatewaySessionId || '') }] };
+        });
+
+        // Agent tool: calls gateway reverse tool to capture session, returns the captured id
+        agent.tool('agent.capture-gateway-session', {}, async (_args: any, ctx: any) => {
+            const result = await ctx.client.callTool({ name: 'gateway.capture-session', arguments: {} });
+            return { content: [{ type: 'text', text: extractFirstText(result) }] };
+        });
+
+        try {
+            agentHost = new http.Server(agentPort, {
+                '/mcp': agent.wsHandler(),
+            });
+            gatewayHost = new http.Server(gatewayPort, {
+                '/mcp': gateway.wsHandler(),
+            });
+            agentHost.start();
+            gatewayHost.start();
+            coroutine.sleep(50);
+
+            const connection = await withTimeout(
+                agent.connect({ transport: 'ws', url: `ws://127.0.0.1:${gatewayPort}/mcp` }),
+                3000,
+                'agent connect gateway for session capture'
+            );
+
+            // Capture the session ID from the gateway's perspective
+            const sessionResult = await withTimeout(
+                connection.callTool({ name: 'agent.capture-gateway-session', arguments: {} }),
+                3000,
+                'capture gateway session id'
+            );
+            const sessionId = extractFirstText(sessionResult);
+            assert.ok(sessionId.length > 0);
+
+            // Send with explicit sessionId targeting using gateway's session ID
+            await withTimeout(
+                gateway.sendNotification(
+                    'gateway/targeted',
+                    { payload: 'targeted-from-gateway' },
+                    { sessionId },
+                ),
+                3000,
+                'gateway send targeted notification'
+            );
+
+            const notification = await withTimeout(
+                notificationReceived,
+                3000,
+                'agent receive targeted notification from gateway'
+            );
+            assert.equal(notification?.method, 'gateway/targeted');
+            assert.equal(notification?.params?.payload, 'targeted-from-gateway');
+        } finally {
+            try { await gateway.close(); } catch (_) {}
+            try { await agent.close(); } catch (_) {}
+            if (gatewayHost) {
+                try { gatewayHost.stop(); } catch (_) {}
+            }
+            if (agentHost) {
+                try { agentHost.stop(); } catch (_) {}
+            }
+        }
+    });
+
+    it('sendNotification outside handler context without target throws error', async () => {
+        const agentPort = nextPort();
+        const gatewayPort = nextPort();
+        const agent = new BidirectionalSession({
+            serverInfo: { name: 'agent-server', version: '1.0.0' },
+            clientInfo: { name: 'agent-client', version: '1.0.0' },
+        });
+        const gateway = new ForwardingGateway({
+            appInfo: { name: 'app-gateway', version: '1.0.0' },
+            connectServer: async () => ({ transport: 'ws', url: `ws://127.0.0.1:${agentPort}/mcp` }),
+        });
+        let agentHost: any = null;
+        let gatewayHost: any = null;
+
+        try {
+            agentHost = new http.Server(agentPort, {
+                '/mcp': agent.wsHandler(),
+            });
+            gatewayHost = new http.Server(gatewayPort, {
+                '/mcp': gateway.wsHandler(),
+            });
+            agentHost.start();
+            gatewayHost.start();
+            coroutine.sleep(50);
+
+            await withTimeout(
+                agent.connect({ transport: 'ws', url: `ws://127.0.0.1:${gatewayPort}/mcp` }),
+                3000,
+                'agent connect gateway'
+            );
+
+            // Outside handler, no sessionId → should throw
+            await assert.rejects(
+                withTimeout(
+                    gateway.sendNotification('gateway/untargeted', { payload: 'no-target' }),
+                    3000,
+                    'gateway send untargeted notification'
+                ),
+                /requires a session context/i,
+            );
+        } finally {
+            try { await gateway.close(); } catch (_) {}
+            try { await agent.close(); } catch (_) {}
+            if (gatewayHost) {
+                try { gatewayHost.stop(); } catch (_) {}
+            }
+            if (agentHost) {
+                try { agentHost.stop(); } catch (_) {}
+            }
+        }
+    });
+
 });

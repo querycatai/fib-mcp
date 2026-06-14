@@ -190,14 +190,11 @@ export class SharedServerTransport extends Transport {
 
         if (isNotification(message)) {
             const sessionId = this._resolveTargetSessionId(options);
-            if (sessionId) {
-                await this._sendToConnection(sessionId, message);
-                return;
+            if (!sessionId) {
+                throw new Error('BidirectionalSession reverse notification requires a session context');
             }
 
-            for (const connection of this._connections.values()) {
-                await connection.sendFromServer(message);
-            }
+            await this._sendToConnection(sessionId, message);
         }
     }
 
@@ -218,6 +215,10 @@ export class SharedServerTransport extends Transport {
     }
 
     private _resolveTargetSessionId(options?: TransportSendOptions): string | undefined {
+        if (options && (options as any).sessionId !== undefined) {
+            return (options as any).sessionId;
+        }
+
         if (this._activeSessionId) {
             return this._activeSessionId;
         }
@@ -398,6 +399,10 @@ class BridgeConnection implements BidirectionalConnection {
         }
 
         await this.sendFromOwner('forward', message, options);
+    }
+
+    async sendNotification(method: string, params?: Record<string, any>, options?: TransportSendOptions): Promise<void> {
+        await this.notify({ jsonrpc: '2.0', method, params: params ?? {} }, options);
     }
 
     async sendFromOwner(owner: ProviderSide, message: JSONRPCMessage, options?: TransportSendOptions): Promise<void> {

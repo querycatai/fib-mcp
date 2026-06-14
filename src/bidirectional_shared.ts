@@ -149,5 +149,11 @@ export interface BidirectionalConnection {
     getPrompt(...args: any[]): Promise<any>;
     request(message: Record<string, any>, options?: TransportSendOptions & { onresponsemessage?: (extra?: MessageExtraInfo) => void; onrawresponse?: (rawMessage: string, extra?: MessageExtraInfo) => boolean | Promise<boolean> }): Promise<Record<string, any> | null>;
     notify(message: Record<string, any>, options?: TransportSendOptions): Promise<void>;
+    /**
+     * Send a notification through the forward channel.
+     * Convenience wrapper around `notify()` that accepts method name and
+     * params directly instead of a full JSON-RPC message.
+     */
+    sendNotification(method: string, params?: Record<string, any>, options?: TransportSendOptions): Promise<void>;
     close(): Promise<void>;
 }

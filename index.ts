@@ -38,7 +38,7 @@ export type {
 
 // ── Transport base ────────────────────────────────────────────────────────────
 export { Transport }                                          from './src/base';
-export type { JSONRPCMessage, MessageHandler, ErrorHandler, CloseHandler } from './src/base';
+export type { JSONRPCMessage, MessageHandler, ErrorHandler, CloseHandler, TransportSendOptions } from './src/base';
 
 // ── Transport implementations (for advanced use) ──────────────────────────────
 export { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
