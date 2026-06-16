@@ -190,11 +190,15 @@ export class SharedServerTransport extends Transport {
 
         if (isNotification(message)) {
             const sessionId = this._resolveTargetSessionId(options);
-            if (!sessionId) {
-                throw new Error('BidirectionalSession reverse notification requires a session context');
+            if (sessionId) {
+                await this._sendToConnection(sessionId, message);
+                return;
             }
 
-            await this._sendToConnection(sessionId, message);
+            // Broadcast to all connections (backward compatible)
+            for (const connection of this._connections.values()) {
+                await connection.sendFromServer(message);
+            }
         }
     }
 

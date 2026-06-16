@@ -1169,6 +1169,69 @@ describe('BidirectionalSession public APIs', () => {
             if (host) { try { host.stop(); } catch (_) {} }
         }
     });
+
+    it('sendNotification without sessionId broadcasts to all connected peers', async () => {
+        const port = nextPort();
+        const accepted = createSession('accepted-server', 'accepted-client');
+        const peerOne = createSession('peer-one', 'peer-one-client', {
+            serverInfo: { name: 'peer-one', version: '1.0.0' },
+        });
+        const peerTwo = createSession('peer-two', 'peer-two-client', {
+            serverInfo: { name: 'peer-two', version: '1.0.0' },
+        });
+        let connectionOne: any = null;
+        let connectionTwo: any = null;
+        let host: any = null;
+
+        const notifyOne = new Promise<any>((resolve) => {
+            peerOne.setNotificationHandler(
+                (NotificationSchema as any).extend({ method: z.literal('accepted/broadcast') }),
+                async (notification: any) => { resolve(notification); }
+            );
+        });
+
+        const notifyTwo = new Promise<any>((resolve) => {
+            peerTwo.setNotificationHandler(
+                (NotificationSchema as any).extend({ method: z.literal('accepted/broadcast') }),
+                async (notification: any) => { resolve(notification); }
+            );
+        });
+
+        try {
+            host = new http.Server(port, {
+                '/mcp': accepted.wsHandler(),
+            });
+            host.start();
+            coroutine.sleep(50);
+
+            [connectionOne, connectionTwo] = await Promise.all([
+                withTimeout(peerOne.connect({ transport: 'ws', url: `ws://127.0.0.1:${port}/mcp` }), 3000, 'open peer one'),
+                withTimeout(peerTwo.connect({ transport: 'ws', url: `ws://127.0.0.1:${port}/mcp` }), 3000, 'open peer two'),
+            ]);
+
+            // Send notification WITHOUT sessionId → should broadcast to ALL peers
+            await withTimeout(
+                accepted.sendNotification('accepted/broadcast', { payload: 'hello-all' }),
+                3000,
+                'send broadcast notification'
+            );
+
+            const r1 = await withTimeout(notifyOne, 3000, 'peer one receive broadcast');
+            assert.equal(r1?.method, 'accepted/broadcast');
+            assert.equal(r1?.params?.payload, 'hello-all');
+
+            const r2 = await withTimeout(notifyTwo, 3000, 'peer two receive broadcast');
+            assert.equal(r2?.method, 'accepted/broadcast');
+            assert.equal(r2?.params?.payload, 'hello-all');
+        } finally {
+            if (connectionOne) { try { await connectionOne.close(); } catch (_) {} }
+            if (connectionTwo) { try { await connectionTwo.close(); } catch (_) {} }
+            try { await peerOne.close(); } catch (_) {}
+            try { await peerTwo.close(); } catch (_) {}
+            try { await accepted.close(); } catch (_) {}
+            if (host) { try { host.stop(); } catch (_) {} }
+        }
+    });
 });
 
 describe('BidirectionalSession stdio mode', () => {
