@@ -156,7 +156,7 @@ export class ForwardingGateway {
     tool<Args extends ZodRawShapeCompat>(name: string, paramsSchema: Args, annotations: ToolAnnotations, cb: BidirectionalToolCallback<Args>): RegisteredTool;
     tool<Args extends ZodRawShapeCompat>(name: string, description: string, paramsSchema: Args, annotations: ToolAnnotations, cb: BidirectionalToolCallback<Args>): RegisteredTool;
     tool(...args: any[]): RegisteredTool {
-        return this._reverseEndpoint.tool(...args);
+        return (this._reverseEndpoint as any).tool(...args);
     }
 
     /**

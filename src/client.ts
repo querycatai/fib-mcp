@@ -91,16 +91,17 @@ function createClientTransportFromConfig(config: McpClientConnectOptions): any {
         return new SseClientTransport(config.url, config.messageUrl, config.options);
     }
 
-    const command = config.command || process.execPath;
-    const args = config.command
-        ? (config.args || [])
-        : [config.path || ''];
+    const stdioConfig = config as McpClientStdioConnectOptions;
+    const command = stdioConfig.command || process.execPath;
+    const args = stdioConfig.command
+        ? (stdioConfig.args || [])
+        : [stdioConfig.path || ''];
 
-    if (!config.command && !config.path) {
+    if (!stdioConfig.command && !stdioConfig.path) {
         throw new Error('stdio connect requires either command or path');
     }
 
-    return new SdkStdioClientTransport({ command, args, ...(config.options || {}) });
+    return new SdkStdioClientTransport({ command, args, ...(stdioConfig.options || {}) });
 }
 
 

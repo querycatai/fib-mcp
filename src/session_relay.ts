@@ -40,8 +40,8 @@ class ConnectionClientTransport extends Transport {
         this._forceInitialize = forceInitialize;
     }
 
-    get sessionId(): string | undefined {
-        return this._forceInitialize ? undefined : super.sessionId;
+    get sessionId(): string {
+        return (this._forceInitialize ? undefined : super.sessionId) as string;
     }
 
     async start(): Promise<void> {}
@@ -418,7 +418,7 @@ class BridgeConnection implements BidirectionalConnection {
             this._pendingOwners.set(toRequestKey((message as any).id), owner);
         }
 
-        await this._transport.send(message, options);
+        await this._transport.send(message as any, options);
     }
 
     private async _ensureClientConnected(): Promise<void> {
@@ -613,7 +613,7 @@ export class SessionRelay {
         const self = this;
         const wst = new WebSocketServerTransport();
         return wst.handler(function (conn: WebSocketServerTransport) {
-            self._connect(conn, false).catch(function (error: any) {
+            self._connect(conn as any, false).catch(function (error: any) {
                 const normalized = toError(error);
                 try {
                     if (conn.onerror) {
